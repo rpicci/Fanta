@@ -1,0 +1,1383 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Fantacalcio Semplificato</title>
+<meta name="theme-color" content="#0B0D10">
+<meta name="description" content="Gioco di fantacalcio semplificato multi-utente per la Serie A">
+<link rel="manifest" href="./manifest.json">
+<link rel="icon" href="./icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="./icon.svg">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+<style>
+  html, body { margin: 0; padding: 0; background: #0B0D10; }
+  #root-loading { color: #8B9098; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; padding: 24px; text-align: center; }
+</style>
+</head>
+<body>
+<div id="root"><p id="root-loading">Caricamento…</p></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useMemo, useCallback, useEffect } = React;
+
+function makeIcon(glyph) {
+  return function Icon({ size = 16, className = '', style = {}, ...rest }) {
+    return React.createElement('span', { className, style: { fontSize: size, lineHeight: 1, display: 'inline-block', ...style }, ...rest }, glyph);
+  };
+}
+const Shield = makeIcon('🛡️');
+const Users = makeIcon('👥');
+const Trophy = makeIcon('🏆');
+const Calculator = makeIcon('🧮');
+const Plus = makeIcon('+');
+const X = makeIcon('✕');
+const RefreshCw = makeIcon('⟳');
+const Star = makeIcon('★');
+const Check = makeIcon('✓');
+const Trash2 = makeIcon('🗑️');
+const Pencil = makeIcon('✎');
+const Search = makeIcon('🔍');
+const LogOut = makeIcon('⏏');
+const Lock = makeIcon('🔒');
+const Calendar = makeIcon('📅');
+const Download = makeIcon('⬇️');
+const Upload = makeIcon('⬆️');
+const Database = makeIcon('🗄️');
+const XLSX = window.XLSX;
+
+function usePersisted(key, initial) {
+  const [state, setState] = useState(() => {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw !== null ? JSON.parse(raw) : initial;
+    } catch (e) { return initial; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(key, JSON.stringify(state)); } catch (e) { /* storage pieno o non disponibile */ }
+  }, [key, state]);
+  return [state, setState];
+}
+
+
+/* ============================= DATI INIZIALI ============================= */
+/* Dati indicativi (Serie A 2026/27, aggiornati a inizio settembre 2026).
+   Pensati per essere corretti manualmente o rigenerati via AI: non prenderli
+   come riferimento definitivo per un uso reale del gioco. */
+
+const RAW_TEAMS = [
+  ['ROM', 'Roma', 9, 3, 10, 1],
+  ['INT', 'Inter', 9, 3, 8, 2],
+  ['LAZ', 'Lazio', 9, 3, 4, 0],
+  ['COM', 'Como', 7, 3, 7, 3],
+  ['MIL', 'Milan', 7, 3, 5, 2],
+  ['JUV', 'Juventus', 7, 3, 4, 1],
+  ['FRO', 'Frosinone', 6, 3, 6, 3],
+  ['ATA', 'Atalanta', 6, 3, 4, 3],
+  ['CAG', 'Cagliari', 6, 3, 2, 1],
+  ['UDI', 'Udinese', 4, 3, 5, 5],
+  ['SAS', 'Sassuolo', 4, 3, 5, 5],
+  ['NAP', 'Napoli', 3, 3, 5, 5],
+  ['TOR', 'Torino', 3, 3, 4, 5],
+  ['LEC', 'Lecce', 3, 3, 2, 5],
+  ['BOL', 'Bologna', 1, 3, 2, 4],
+  ['PAR', 'Parma', 1, 3, 1, 4],
+  ['MON', 'Monza', 1, 3, 4, 8],
+  ['VEN', 'Venezia', 0, 3, 2, 7],
+  ['GEN', 'Genoa', 0, 3, 1, 7],
+  ['FIO', 'Fiorentina', 0, 3, 1, 9],
+];
+const INITIAL_TEAMS = RAW_TEAMS.map(([id, name, pts, played, gf, gs]) => ({ id, name, pts, played, gf, gs }));
+
+/* Rose reali e complete stagione 2026/27 (fonte: aggregatore rose Serie A, agg. 8 settembre 2026).
+   I numeri di maglia non sono disponibili per la maggior parte dei giocatori nella fonte usata
+   (eccetto la Roma): compaiono come "—" e vanno confermati/aggiornati con AI o manualmente. */
+const RAW_PLAYERS = [
+  // ATALANTA
+  ['ATA','Marco Carnesecchi',null,'Portiere'],['ATA','Francesco Rossi',null,'Portiere'],['ATA','Marco Sportiello',null,'Portiere'],
+  ['ATA','Thomas Kristensen',null,'Difensore'],['ATA','Honest Ahanor',null,'Difensore'],['ATA','Mitchel Bakker',null,'Difensore'],['ATA','Raoul Bellanova',null,'Difensore'],['ATA','Isak Hien',null,'Difensore'],['ATA','Sead Kolasinac',null,'Difensore'],['ATA','Odilon Kossounou',null,'Difensore'],['ATA','Giorgio Scalvini',null,'Difensore'],['ATA','Lorenzo Bernasconi',null,'Difensore'],['ATA','Davide Zappacosta',null,'Difensore'],
+  ['ATA','Gianluca Gaetano',null,'Centrocampista'],['ATA','Ibrahim Sulemana',null,'Centrocampista'],['ATA','Mario Pasalic',null,'Centrocampista'],['ATA','Lazar Samardzic',null,'Centrocampista'],['ATA','Éderson',null,'Centrocampista'],['ATA','Marten de Roon',null,'Centrocampista'],['ATA','Nicola Zalewski',null,'Centrocampista'],['ATA','Eljif Elmas',null,'Centrocampista'],
+  ['ATA','Kamaldeen Sulemana',null,'Attaccante'],['ATA','Gianluca Scamacca',null,'Attaccante'],['ATA','Charles De Ketelaere',null,'Attaccante'],['ATA','Giacomo Raspadori',null,'Attaccante'],['ATA','Nikola Krstovic',null,'Attaccante'],['ATA','Vanja Vlahovic',null,'Attaccante'],
+  // BOLOGNA
+  ['BOL','Lukasz Skorupski',null,'Portiere'],['BOL','Francesco Raffaelli',null,'Portiere'],['BOL','Massimo Pessina',null,'Portiere'],
+  ['BOL','Rahim Alhassane',null,'Difensore'],['BOL','Mihajlo Ilic',null,'Difensore'],['BOL','Emil Holm',null,'Difensore'],['BOL','Eivind Helland',null,'Difensore'],['BOL','Torbjørn Heggem',null,'Difensore'],['BOL','Nicolò Casale',null,'Difensore'],['BOL','Nadir Zortea',null,'Difensore'],['BOL','Lorenzo De Silvestri',null,'Difensore'],['BOL','Juan Miranda',null,'Difensore'],['BOL','Martin Vitík',null,'Difensore'],
+  ['BOL','Mikel Amondarain',null,'Centrocampista'],['BOL','Tommaso Pobega',null,'Centrocampista'],['BOL','Nikola Moro',null,'Centrocampista'],['BOL','Oussama El Azzouzi',null,'Centrocampista'],['BOL','Lewis Ferguson',null,'Centrocampista'],
+  ['BOL','Roberto Piccoli',null,'Attaccante'],['BOL','Artem Dovbyk',null,'Attaccante'],['BOL','Orji Okwonkwo',null,'Attaccante'],['BOL','Riccardo Orsolini',null,'Attaccante'],['BOL','Federico Bernardeschi',null,'Attaccante'],['BOL','Jonathan Rowe',null,'Attaccante'],['BOL','Jens Odgaard',null,'Attaccante'],['BOL','Jesper Karlsson',null,'Attaccante'],['BOL','Nicolò Cambiaghi',null,'Attaccante'],
+  // CAGLIARI
+  ['CAG','Elia Caprile',null,'Portiere'],['CAG','Giuseppe Ciocci',null,'Portiere'],['CAG','Boris Radunovic',null,'Portiere'],['CAG','Alen Sherri',null,'Portiere'],
+  ['CAG','Riyad Idrissi',null,'Difensore'],['CAG','Yerry Mina',null,'Difensore'],['CAG','Adam Obert',null,'Difensore'],['CAG','Nicola Pintus',null,'Difensore'],['CAG','Othniël Raterink',null,'Difensore'],['CAG','Juan Rodríguez',null,'Difensore'],['CAG','Gabriele Zappa',null,'Difensore'],['CAG','Zé Pedro',null,'Difensore'],
+  ['CAG','Michel Adopo',null,'Centrocampista'],['CAG','Demi Akarakiri',null,'Centrocampista'],['CAG','Nicolò Cavuoti',null,'Centrocampista'],['CAG','Alessandro Deiola',null,'Centrocampista'],['CAG','Jacopo Fazzini',null,'Centrocampista'],['CAG','Matteo Prati',null,'Centrocampista'],['CAG','Alessandro Romano',null,'Centrocampista'],['CAG','Harry Winks',null,'Centrocampista'],['CAG','Alieu Fadera',null,'Centrocampista'],
+  ['CAG','Agustín Albarracín',null,'Attaccante'],['CAG','Gennaro Borrelli',null,'Attaccante'],['CAG','Sebastiano Esposito',null,'Attaccante'],['CAG','Mattia Felici',null,'Attaccante'],['CAG','Zito Luvumbo',null,'Attaccante'],['CAG','Kingstone Mutandwa',null,'Attaccante'],['CAG','Daniel Maldini',null,'Attaccante'],
+  // COMO
+  ['COM','Emil Audero',null,'Portiere'],['COM','Jean Butez',null,'Portiere'],['COM','Mauro Vigorito',null,'Portiere'],
+  ['COM','Trevoh Chalobah',null,'Difensore'],['COM','Kaiki',null,'Difensore'],['COM','Andrés Cuenca',null,'Difensore'],['COM','Marc Oliver Kempf',null,'Difensore'],['COM','Álex Valle',null,'Difensore'],['COM','Alberto Dossena',null,'Difensore'],['COM','Edoardo Goldaniga',null,'Difensore'],['COM','Jacobo Ramón',null,'Difensore'],['COM','Ivan Smolcic',null,'Difensore'],['COM','Ignace Van der Brempt',null,'Difensore'],
+  ['COM','Ali Jasim',null,'Centrocampista'],['COM','Luis Milla',null,'Centrocampista'],['COM','Matthias Braunöder',null,'Centrocampista'],['COM','Mattia Liberali',null,'Centrocampista'],['COM','Luca Mazzitelli',null,'Centrocampista'],['COM','Maxence Caqueret',null,'Centrocampista'],['COM','Nico Paz',null,'Centrocampista'],['COM','Adrian Lahdo',null,'Centrocampista'],['COM','Martin Baturina',null,'Centrocampista'],['COM','Máximo Perrone',null,'Centrocampista'],['COM','Riccardo Cassano',null,'Centrocampista'],['COM','Lucas Da Cunha',null,'Centrocampista'],
+  ['COM','Álvaro Morata',null,'Attaccante'],['COM','Alessandro Gabrielloni',null,'Attaccante'],['COM','Tasos Douvikas',null,'Attaccante'],['COM','Jesús Rodríguez',null,'Attaccante'],['COM','Nicolas Kühn',null,'Attaccante'],['COM','Assane Diao',null,'Attaccante'],['COM','Jayden Addai',null,'Attaccante'],['COM','Iván Azón',null,'Attaccante'],['COM','Tommaso Fumagalli',null,'Attaccante'],['COM','Marlon Mustapha',null,'Attaccante'],
+  // FIORENTINA
+  ['FIO','David de Gea',null,'Portiere'],['FIO','Oliver Christensen',null,'Portiere'],['FIO','Luca Lezzerini',null,'Portiere'],
+  ['FIO','Dodô',null,'Difensore'],['FIO','João Mário',null,'Difensore'],['FIO','Radu Dragusin',null,'Difensore'],['FIO','Victor Valdepeñas',null,'Difensore'],['FIO','Álex Jiménez',null,'Difensore'],['FIO','Viery',null,'Difensore'],['FIO','Marin Pongracic',null,'Difensore'],['FIO','Luca Ranieri',null,'Difensore'],['FIO','Eman Kospo',null,'Difensore'],['FIO','Niccolò Fortini',null,'Difensore'],['FIO','Fabiano Parisi',null,'Difensore'],
+  ['FIO','Arthur Atta',null,'Centrocampista'],['FIO','Marco Brescianini',null,'Centrocampista'],['FIO','Giovanni Fabbian',null,'Centrocampista'],['FIO','Nicolò Fagioli',null,'Centrocampista'],['FIO','Rolando Mandragora',null,'Centrocampista'],['FIO','Cher Ndour',null,'Centrocampista'],['FIO','Christ Inao Oulai',null,'Centrocampista'],
+  ['FIO','Wilfried Gnonto',null,'Attaccante'],['FIO','Franco Mastantuono',null,'Attaccante'],['FIO','Albert Gudmundsson',null,'Attaccante'],['FIO','Moise Kean',null,'Attaccante'],['FIO','Mateo Pellegrino',null,'Attaccante'],["FIO","M'Bala Nzola",null,'Attaccante'],['FIO','Riccardo Sottil',null,'Attaccante'],
+  // FROSINONE
+  ['FRO','Sebastiano Desplanches',null,'Portiere'],['FRO','Eldin Lolic',null,'Portiere'],['FRO','Lorenzo Palmisani',null,'Portiere'],['FRO','Matteo Pisseri',null,'Portiere'],
+  ['FRO','Omar Fayed',null,'Difensore'],['FRO','Giorgio Cittadini',null,'Difensore'],['FRO','Wisdom Amey',null,'Difensore'],['FRO','Jacopo Gelli',null,'Difensore'],['FRO','Niccolò Corrado',null,'Difensore'],['FRO','Anthony Oyono',null,'Difensore'],['FRO','Jérémy Oyono',null,'Difensore'],['FRO','Gabriele Bracaglia',null,'Difensore'],
+  ['FRO','Florian Grillitsch',null,'Centrocampista'],['FRO','Romano Schmid',null,'Centrocampista'],['FRO','Giacomo Calò',null,'Centrocampista'],['FRO','Ilias Koutsoupias',null,'Centrocampista'],['FRO','Francesco Gelli',null,'Centrocampista'],['FRO','Ben Lhassine Koné',null,'Centrocampista'],['FRO','Anouar El Azzouzi',null,'Centrocampista'],['FRO','Luis Hasa',null,'Centrocampista'],['FRO','Matteo Cichella',null,'Centrocampista'],['FRO','Filippo Grosso',null,'Centrocampista'],['FRO','Kevin Barcella',null,'Centrocampista'],
+  ['FRO','Alessio Zerbin',null,'Attaccante'],['FRO','Fares Ghedjemis',null,'Attaccante'],['FRO','Antonio Raimondo',null,'Attaccante'],['FRO','Giorgi Kvernadze',null,'Attaccante'],['FRO','Muhammed Colley',null,'Attaccante'],['FRO','Seydou Fini',null,'Attaccante'],['FRO','Alejandro Cichero',null,'Attaccante'],
+  // GENOA
+  ['GEN','Justin Bijlow',null,'Portiere'],['GEN','Franz Stolz',null,'Portiere'],['GEN','Ernestas Lysionok',null,'Portiere'],['GEN','Daniele Sommariva',null,'Portiere'],
+  ['GEN','Alessandro Marcandalli',null,'Difensore'],['GEN','Mario Mitaj',null,'Difensore'],['GEN','Aaron Martin',null,'Difensore'],['GEN','Franz-Ethan Meichtry',null,'Difensore'],['GEN','Brooke Norton-Cuffy',null,'Difensore'],['GEN','Leo Østigård',null,'Difensore'],['GEN','Sebastian Otoa',null,'Difensore'],['GEN','David Puczka',null,'Difensore'],['GEN','Stefano Sabelli',null,'Difensore'],['GEN','Johan Vásquez',null,'Difensore'],['GEN','Marcelo Vaz',null,'Difensore'],['GEN','Alan Matturro',null,'Difensore'],
+  ['GEN','Alex Amorim',null,'Centrocampista'],['GEN','Djibril Sow',null,'Centrocampista'],['GEN','Tommaso Baldanzi',null,'Centrocampista'],['GEN','Hugo Cuenca',null,'Centrocampista'],['GEN','Mikael Egill Ellertsson',null,'Centrocampista'],['GEN','Morten Frendrup',null,'Centrocampista'],['GEN','Patrizio Masini',null,'Centrocampista'],['GEN','Hamed Junior Traorè',null,'Centrocampista'],
+  ['GEN','Lorenzo Colombo',null,'Attaccante'],['GEN','Elias Havel',null,'Attaccante'],['GEN','Junior Messias',null,'Attaccante'],['GEN','Lorenzo Venturino',null,'Attaccante'],['GEN','Vitinha',null,'Attaccante'],['GEN','Stephan El Shaarawy',null,'Attaccante'],
+  // INTER
+  ['INT','Josep Martínez',null,'Portiere'],['INT','Raffaele Di Gennaro',null,'Portiere'],['INT','Ivan Provedel',null,'Portiere'],
+  ['INT','Manuel Akanji',null,'Difensore'],['INT','Carlos Augusto',null,'Difensore'],['INT','Alessandro Bastoni',null,'Difensore'],['INT','Yann Bisseck',null,'Difensore'],['INT','Federico Dimarco',null,'Difensore'],['INT','Benjamin Pavard',null,'Difensore'],['INT','John Stones',null,'Difensore'],['INT','Djed Spence',null,'Difensore'],
+  ['INT','Curtis Jones',null,'Centrocampista'],['INT','Nicolò Barella',null,'Centrocampista'],['INT','Hakan Çalhanoğlu',null,'Centrocampista'],['INT','Andy Diouf',null,'Centrocampista'],['INT','Luis Henrique',null,'Centrocampista'],['INT','Henrikh Mkhitaryan',null,'Centrocampista'],['INT','Alexandar Stanković',null,'Centrocampista'],['INT','Petar Sučić',null,'Centrocampista'],['INT','Piotr Zielinski',null,'Centrocampista'],['INT','Kristjan Asllani',null,'Centrocampista'],['INT','Yanis Massolin',null,'Centrocampista'],
+  ['INT','Ange-Yoan Bonny',null,'Attaccante'],['INT','Francesco Pio Esposito',null,'Attaccante'],['INT','Lautaro Martínez',null,'Attaccante'],['INT','Marcus Thuram',null,'Attaccante'],['INT','Mattia Mosconi',null,'Attaccante'],
+  // JUVENTUS
+  ['JUV','Guglielmo Vicario',null,'Portiere'],['JUV','Kamil Grabara',null,'Portiere'],['JUV','Carlo Pinsoglio',null,'Portiere'],
+  ['JUV','Gleison Bremer',null,'Difensore'],['JUV','Juan David Cabal',null,'Difensore'],['JUV','Zeki Çelik',null,'Difensore'],['JUV','Federico Gatti',null,'Difensore'],['JUV','Pierre Kalulu',null,'Difensore'],['JUV','Lloyd Kelly',null,'Difensore'],['JUV','Jhon Lucumí',null,'Difensore'],['JUV','Daniele Rugani',null,'Difensore'],
+  ['JUV','Pape Matar Sarr',null,'Centrocampista'],['JUV','Andrea Cambiaso',null,'Centrocampista'],['JUV','Arthur',null,'Centrocampista'],['JUV','Teun Koopmeiners',null,'Centrocampista'],['JUV','Manuel Locatelli',null,'Centrocampista'],['JUV','Weston McKennie',null,'Centrocampista'],['JUV','Fabio Miretti',null,'Centrocampista'],['JUV','Khéphren Thuram',null,'Centrocampista'],['JUV','Douglas Luiz',null,'Centrocampista'],
+  ['JUV','Nick Woltemade',null,'Attaccante'],['JUV','Jérémie Boga',null,'Attaccante'],['JUV','Kerim Alajbegovic',null,'Attaccante'],['JUV','Francisco Conceição',null,'Attaccante'],['JUV','Jeff Ekhator',null,'Attaccante'],['JUV','Nico González',null,'Attaccante'],['JUV','Arkadiusz Milik',null,'Attaccante'],['JUV','Randal Kolo Muani',null,'Attaccante'],['JUV','Kenan Yildiz',null,'Attaccante'],['JUV','Edon Zhegrova',null,'Attaccante'],
+  // LAZIO
+  ['LAZ','Christos Mandas',null,'Portiere'],['LAZ','Edoardo Motta',null,'Portiere'],['LAZ','Alessio Furlanetto',null,'Portiere'],
+  ['LAZ','Danilho Doekhi',null,'Difensore'],['LAZ','Romano Floriani Mussolini',null,'Difensore'],['LAZ','Samuel Gigot',null,'Difensore'],['LAZ','Manuel Lazzari',null,'Difensore'],['LAZ','Adam Marusic',null,'Difensore'],['LAZ','Patric',null,'Difensore'],['LAZ','Alfonso Pedraza',null,'Difensore'],['LAZ','Luca Pellegrini',null,'Difensore'],['LAZ','Alessio Romagnoli',null,'Difensore'],['LAZ','Oliver Provstgaard',null,'Difensore'],['LAZ','Nuno Tavares',null,'Difensore'],
+  ['LAZ','Reda Belahyane',null,'Centrocampista'],['LAZ','Fisayo Dele-Bashiru',null,'Centrocampista'],['LAZ','Danilo Cataldi',null,'Centrocampista'],['LAZ','Adrian Przyborek',null,'Centrocampista'],['LAZ','Nicolò Rovella',null,'Centrocampista'],['LAZ','Kenneth Taylor',null,'Centrocampista'],['LAZ','Matias Vecino',null,'Centrocampista'],['LAZ','Davide Frattesi',null,'Centrocampista'],
+  ['LAZ','Mattia Zaccagni',null,'Attaccante'],['LAZ','Matteo Cancellieri',null,'Attaccante'],['LAZ','Boulaye Dia',null,'Attaccante'],['LAZ','Gustav Isaksen',null,'Attaccante'],['LAZ','Tijjani Noslin',null,'Attaccante'],['LAZ','Petar Ratkov',null,'Attaccante'],['LAZ','Gabriele Artistico',null,'Attaccante'],
+  // LECCE
+  ['LEC','Wladimiro Falcone',null,'Portiere'],['LEC','Plamen Penev',null,'Portiere'],['LEC','Christian Lupo',null,'Portiere'],
+  ['LEC','Tiago Gabriel',null,'Difensore'],['LEC','Antonino Gallo',null,'Difensore'],['LEC','Kialonda Gaspar',null,'Difensore'],['LEC','Gaby Jean',null,'Difensore'],['LEC','Corrie Ndaba',null,'Difensore'],['LEC','Jamil Siebert',null,'Difensore'],['LEC','Danilo Veiga',null,'Difensore'],['LEC','Owen Kouassi',null,'Difensore'],['LEC','Marlon Ubani',null,'Difensore'],
+  ['LEC','Medon Berisha',null,'Centrocampista'],['LEC','Lassana Coulibaly',null,'Centrocampista'],['LEC','Sadik Fofana',null,'Centrocampista'],['LEC','Omri Gandelman',null,'Centrocampista'],['LEC','Mohamed Kaba',null,'Centrocampista'],['LEC','Youssef Maleh',null,'Centrocampista'],['LEC','Oumar Ngom',null,'Centrocampista'],['LEC','Olaf Gorter',null,'Centrocampista'],['LEC','Niko Kovac',null,'Centrocampista'],
+  ['LEC','Willem Geubbels',null,'Attaccante'],['LEC','Paco Esteban',null,'Attaccante'],["LEC","Konan N'Dri",null,'Attaccante'],['LEC','Santiago Pierotti',null,'Attaccante'],['LEC','Nikola Stulic',null,'Attaccante'],['LEC','Divine Onyemachi',null,'Attaccante'],['LEC','Hjalte Lærke',null,'Attaccante'],
+  // MILAN
+  ['MIL','Mike Maignan',null,'Portiere'],['MIL','Pietro Terracciano',null,'Portiere'],['MIL','Lorenzo Torriani',null,'Portiere'],
+  ['MIL','Davide Bartesaghi',null,'Difensore'],['MIL','Koni De Winter',null,'Difensore'],['MIL','Pervis Estupiñán',null,'Difensore'],['MIL','Matteo Gabbia',null,'Difensore'],['MIL','Mario Gila',null,'Difensore'],['MIL','Strahinja Pavlovic',null,'Difensore'],['MIL','Fikayo Tomori',null,'Difensore'],['MIL','Sankhoun Diawara',null,'Difensore'],
+  ['MIL','Omari Hutchinson',null,'Centrocampista'],['MIL','Warren Bondo',null,'Centrocampista'],['MIL','Youssouf Fofana',null,'Centrocampista'],['MIL','Ardon Jashari',null,'Centrocampista'],['MIL','Ruben Loftus-Cheek',null,'Centrocampista'],['MIL','Luka Modric',null,'Centrocampista'],['MIL','Yunus Musah',null,'Centrocampista'],['MIL','Christian Pulisic',null,'Centrocampista'],['MIL','Adrien Rabiot',null,'Centrocampista'],['MIL','Samuele Ricci',null,'Centrocampista'],['MIL','Alexis Saelemaekers',null,'Centrocampista'],['MIL','Diego Moreira',null,'Centrocampista'],['MIL','Alphadjo Cissè',null,'Centrocampista'],['MIL','Christian Comotto',null,'Centrocampista'],
+  ['MIL','Gonçalo Ramos',null,'Attaccante'],['MIL','Francesco Camarda',null,'Attaccante'],['MIL','Rafael Leão',null,'Attaccante'],['MIL','Christopher Nkunku',null,'Attaccante'],['MIL','Samuel Chukwueze',null,'Attaccante'],['MIL','Andrej Kostic',null,'Attaccante'],
+  // MONZA
+  ['MON','Noel Törnqvist',null,'Portiere'],['MON','Demba Thiam',null,'Portiere'],['MON','Semuel Pizzignacco',null,'Portiere'],['MON','Aljaž Štrajnár',null,'Portiere'],
+  ['MON','Jan Ziolkowski',null,'Difensore'],['MON','Valentin Antov',null,'Difensore'],['MON','Samuele Birindelli',null,'Difensore'],['MON','Andrea Carboni',null,'Difensore'],['MON','Adam Bakoune',null,'Difensore'],['MON','Arvid Brorsson',null,'Difensore'],['MON','Samuele Capolupo',null,'Difensore'],['MON','Filippo Delli Carri',null,'Difensore'],['MON','Eddy Kouadio',null,'Difensore'],['MON','Lorenzo Lucchesi',null,'Difensore'],['MON','Ricardo Mangas',null,'Difensore'],
+  ['MON','Patrick Ciurria',null,'Centrocampista'],['MON','Leonardo Colombo',null,'Centrocampista'],['MON','Nicolas Galazzi',null,'Centrocampista'],['MON','Pedro Obiang',null,'Centrocampista'],['MON','Manga Foe Ondoa',null,'Centrocampista'],['MON','Matteo Pessina',null,'Centrocampista'],['MON','Ebenezer Akinsanmiro',null,'Centrocampista'],
+  ['MON','Augustin Alvarez',null,'Attaccante'],['MON','Andrea Colpani',null,'Attaccante'],['MON','Patrick Cutrone',null,'Attaccante'],['MON','Omari Forson',null,'Attaccante'],['MON','Keita Baldé',null,'Attaccante'],['MON','Dany Mota',null,'Attaccante'],['MON','Andrea Petagna',null,'Attaccante'],['MON','Gustavo Varela',null,'Attaccante'],
+  // NAPOLI
+  ['NAP','Vanja Milinković-Savić',null,'Portiere'],['NAP','Alex Meret',null,'Portiere'],['NAP','Nikita Contini',null,'Portiere'],['NAP','Mathias Ferrante',null,'Portiere'],
+  ['NAP','Sam Beukema',null,'Difensore'],['NAP','Alessandro Buongiorno',null,'Difensore'],['NAP','Giovanni Di Lorenzo',null,'Difensore'],['NAP','Luca Marianucci',null,'Difensore'],['NAP','Rafa Marin',null,'Difensore'],['NAP','Pasquale Mazzocchi',null,'Difensore'],['NAP','Mathias Olivera',null,'Difensore'],['NAP','Amir Rrahmani',null,'Difensore'],['NAP','Leonardo Spinazzola',null,'Difensore'],['NAP','Nosa Obaretin',null,'Difensore'],
+  ['NAP','Kevin De Bruyne',null,'Centrocampista'],['NAP','Michael Folorunsho',null,'Centrocampista'],['NAP','Billy Gilmour',null,'Centrocampista'],['NAP','Stanislav Lobotka',null,'Centrocampista'],['NAP','Scott McTominay',null,'Centrocampista'],['NAP','André-Frank Zambo Anguissa',null,'Centrocampista'],['NAP','Jesper Lindstrom',null,'Centrocampista'],['NAP','Jens Cajuste',null,'Centrocampista'],
+  ['NAP','Walid Cheddira',null,'Attaccante'],['NAP','Giovane',null,'Attaccante'],['NAP','Rasmus Højlund',null,'Attaccante'],['NAP','Noa Lang',null,'Attaccante'],['NAP','Lorenzo Lucca',null,'Attaccante'],['NAP','David Neres',null,'Attaccante'],['NAP','Matteo Politano',null,'Attaccante'],['NAP','Alisson Santos',null,'Attaccante'],['NAP','Antonio Vergara',null,'Attaccante'],
+  // PARMA
+  ['PAR','Edoardo Corvi',null,'Portiere'],['PAR','Giovanni Daffara',null,'Portiere'],['PAR','Gianluca Astaldi',null,'Portiere'],
+  ['PAR','Diego Carlos',null,'Difensore'],['PAR','Franco Carboni',null,'Difensore'],['PAR','Abdoulaye Ndiaye',null,'Difensore'],['PAR','Botond Balogh',null,'Difensore'],['PAR','Lautaro Valenti',null,'Difensore'],['PAR','Emanuele Valeri',null,'Difensore'],['PAR','Enrico Delprato',null,'Difensore'],['PAR','Sascha Britschgi',null,'Difensore'],['PAR','Mariano Troilo',null,'Difensore'],
+  ['PAR','Adrián Bernabé',null,'Centrocampista'],['PAR','Benjamin Cremaschi',null,'Centrocampista'],['PAR','Mandela Keita',null,'Centrocampista'],['PAR','Hans Nicolussi Caviglia',null,'Centrocampista'],['PAR','Christian Ordoñez',null,'Centrocampista'],['PAR','Elia Plicco',null,'Centrocampista'],['PAR','Oliver Sørensen',null,'Centrocampista'],['PAR','Rachid Kouda',null,'Centrocampista'],
+  ['PAR','Pontus Almqvist',null,'Attaccante'],['PAR','Adrian Benedyczak',null,'Attaccante'],['PAR','Nesta Elphege',null,'Attaccante'],['PAR','Matija Frigan',null,'Attaccante'],['PAR','Jacob Ondrejka',null,'Attaccante'],['PAR','David Romero',null,'Attaccante'],['PAR','Antoine Joujou',null,'Attaccante'],
+  // ROMA (con numeri di maglia confermati, fonte Forza Lupi, agg. 7 settembre 2026)
+  ['ROM','Mile Svilar',99,'Portiere'],['ROM','Pierluigi Gollini',95,'Portiere'],['ROM','Devis Vásquez',null,'Portiere'],
+  ['ROM','Angeliño',null,'Difensore'],['ROM','Daniele Ghilardi',87,'Difensore'],['ROM','Mario Hermoso',22,'Difensore'],['ROM','Gianluca Mancini',23,'Difensore'],["ROM","Evan N'Dicka",5,'Difensore'],['ROM','Devyne Rensch',2,'Difensore'],['ROM','Buba Sangaré',null,'Difensore'],['ROM','Wesley',43,'Difensore'],['ROM','Nahuel Molina',20,'Difensore'],['ROM','Konstantinos Koulierakis',3,'Difensore'],
+  ['ROM','Bryan Cristante',4,'Centrocampista'],['ROM','Manu Koné',17,'Centrocampista'],['ROM','Lorenzo Pellegrini',7,'Centrocampista'],['ROM','Niccolò Pisilli',61,'Centrocampista'],
+  ['ROM','Rodrigo Mora',86,'Attaccante'],['ROM','Paulo Dybala',21,'Attaccante'],['ROM','Donyell Malen',14,'Attaccante'],['ROM','Matías Soulé',18,'Attaccante'],['ROM','Robinio Vaz',null,'Attaccante'],['ROM','Santiago Castro',9,'Attaccante'],
+  // SASSUOLO
+  ['SAS','Arijanet Muric',null,'Portiere'],['SAS','Stefano Turati',null,'Portiere'],['SAS','Gioele Zacchi',null,'Portiere'],
+  ['SAS','Fedde Leysen',null,'Difensore'],['SAS','Rafael Obrador',null,'Difensore'],['SAS','Simone Cinquegrano',null,'Difensore'],['SAS','Fali Candé',null,'Difensore'],['SAS','Josh Doig',null,'Difensore'],['SAS','Jay Idzes',null,'Difensore'],['SAS','Filippo Missori',null,'Difensore'],['SAS','Sebastian Walukiewicz',null,'Difensore'],['SAS','Kevin Miranda',null,'Difensore'],['SAS','Cas Odenthal',null,'Difensore'],['SAS','Tommaso Macchioni',null,'Difensore'],['SAS','Luca Barani',null,'Difensore'],['SAS','Giorgio Vezzosi',null,'Difensore'],
+  ['SAS','Vasilije Adžić',null,'Centrocampista'],['SAS','Darryl Bakola',null,'Centrocampista'],['SAS','Daniel Boloca',null,'Centrocampista'],['SAS','Edoardo Iannoni',null,'Centrocampista'],['SAS','Ismaël Koné',null,'Centrocampista'],['SAS','Luca Lipani',null,'Centrocampista'],['SAS','Nemanja Matic',null,'Centrocampista'],['SAS','Kristian Thorstvedt',null,'Centrocampista'],['SAS','Fabrizio Caligara',null,'Centrocampista'],['SAS','Andrea Ghion',null,'Centrocampista'],['SAS','Riccardo Ciervo',null,'Centrocampista'],
+  ['SAS','Domenico Berardi',null,'Attaccante'],['SAS','Armand Laurienté',null,'Attaccante'],['SAS','Luca Moro',null,'Attaccante'],['SAS','Andrea Pinamonti',null,'Attaccante'],['SAS','Cristian Volpato',null,'Attaccante'],['SAS','Kieron Bowie',null,'Attaccante'],['SAS','Benja Dominguez',null,'Attaccante'],['SAS','Laurs Skjellerup',null,'Attaccante'],
+  // TORINO
+  ['TOR','Franco Israel',null,'Portiere'],['TOR','Diego Mascardi',null,'Portiere'],['TOR','Alberto Paleari',null,'Portiere'],['TOR','Lapo Siviero',null,'Portiere'],
+  ['TOR','Cristiano Biraghi',null,'Difensore'],['TOR','Eray Comert',null,'Difensore'],['TOR','Saúl Coco',null,'Difensore'],['TOR','Pietro Comuzzo',null,'Difensore'],['TOR','Ardian Ismajli',null,'Difensore'],['TOR','Marcus Pedersen',null,'Difensore'],['TOR','Come Bianay',null,'Difensore'],['TOR','Ricardo Rodriguez',null,'Difensore'],
+  ['TOR','Tino Anjorin',null,'Centrocampista'],['TOR','Kian Fitz-Jim',null,'Centrocampista'],['TOR','Cesare Casadei',null,'Centrocampista'],['TOR','Gvidas Gineitis',null,'Centrocampista'],['TOR','Ivan Ilic',null,'Centrocampista'],['TOR','Emirhan Ilkhan',null,'Centrocampista'],['TOR','Gaetano Oristanio',null,'Centrocampista'],['TOR','Nikola Vlasic',null,'Centrocampista'],
+  ['TOR','Zakaria Aboukhlal',null,'Attaccante'],['TOR','Ché Adams',null,'Attaccante'],['TOR','Sandro Kulenovic',null,'Attaccante'],['TOR','Alieu Njie',null,'Attaccante'],['TOR','Zanos Savva',null,'Attaccante'],['TOR','Giovanni Simeone',null,'Attaccante'],['TOR','Duván Zapata',null,'Attaccante'],['TOR','Alessio Cacciamani',null,'Attaccante'],
+  // UDINESE
+  ['UDI','Maduka Okoye',null,'Portiere'],['UDI','Daniele Padelli',null,'Portiere'],['UDI','Edoardo Piana',null,'Portiere'],
+  ['UDI','James Abankwah',null,'Difensore'],['UDI','Juan Arizala',null,'Difensore'],['UDI','Nicolò Bertola',null,'Difensore'],['UDI','Enzo Ebosse',null,'Difensore'],['UDI','Christian Kabasele',null,'Difensore'],['UDI','Hassane Kamara',null,'Difensore'],['UDI','Branimir Mlacic',null,'Difensore'],['UDI','Matteo Palma',null,'Difensore'],['UDI','Oumar Solet',null,'Difensore'],['UDI','Mërgim Vojvoda',null,'Difensore'],['UDI','Alessandro Zanoli',null,'Difensore'],['UDI','Jordan Zemura',null,'Difensore'],['UDI','Saba Goglichidze',null,'Difensore'],
+  ['UDI','Abdoulaye Camara',null,'Centrocampista'],['UDI','Giorgi Chakvetadze',null,'Centrocampista'],['UDI','Jurgen Ekkelenkamp',null,'Centrocampista'],['UDI','Unai Gómez',null,'Centrocampista'],['UDI','Jesper Karlström',null,'Centrocampista'],['UDI','Lennon Miller',null,'Centrocampista'],['UDI','Jakub Piotrowski',null,'Centrocampista'],['UDI','Oier Zarraga',null,'Centrocampista'],['UDI','David Pejicic',null,'Centrocampista'],
+  ['UDI','Vakoun Issouf Bayo',null,'Attaccante'],['UDI','Adam Buksa',null,'Attaccante'],['UDI','Keinan Davis',null,'Attaccante'],['UDI','Idrissa Gueye',null,'Attaccante'],['UDI','Nicolò Zaniolo',null,'Attaccante'],
+  // VENEZIA
+  ['VEN','Filip Stankovic',null,'Portiere'],['VEN','Matteo Grandi',null,'Portiere'],['VEN','Alessio Pozzi',null,'Portiere'],
+  ['VEN','Armel Bella-Kotchap',null,'Difensore'],['VEN','Thierry Correia',null,'Difensore'],['VEN','Bartol Franjic',null,'Difensore'],['VEN','Ale Gomes',null,'Difensore'],['VEN','Ridgeciano Haps',null,'Difensore'],['VEN','Richie Sagrado',null,'Difensore'],['VEN','Joel Schingtienne',null,'Difensore'],['VEN','Marin Sverko',null,'Difensore'],['VEN','Matías Moreno',null,'Difensore'],['VEN','Redouane Halhal',null,'Difensore'],['VEN','Calixte Ligue',null,'Difensore'],
+  ['VEN','Simon Sohm',null,'Centrocampista'],['VEN','Toma Basic',null,'Centrocampista'],['VEN','Lorenzo Berardi',null,'Centrocampista'],['VEN','Emil Bohinen',null,'Centrocampista'],['VEN','Gianluca Busio',null,'Centrocampista'],['VEN','Matteo Dagasso',null,'Centrocampista'],['VEN','Alfred Duncan',null,'Centrocampista'],['VEN','Marko Hussein Farji',null,'Centrocampista'],['VEN','Antoine Hainaut',null,'Centrocampista'],['VEN','Thorir Johann Helgason',null,'Centrocampista'],['VEN','Nunzio Lella',null,'Centrocampista'],['VEN','Enrique Pérez',null,'Centrocampista'],['VEN','Lamine Fanne',null,'Centrocampista'],
+  ['VEN','Toni Fernandez',null,'Attaccante'],['VEN','Akor Adams',null,'Attaccante'],['VEN','Andrea Adorante',null,'Attaccante'],['VEN','Antonio Casas',null,'Attaccante'],['VEN','Lion Lauberbach',null,'Attaccante'],['VEN','Kornel Lisman',null,'Attaccante'],['VEN','Albion Rrahmani',null,'Attaccante'],['VEN','John Yeboah',null,'Attaccante'],
+];
+const INITIAL_PLAYERS = RAW_PLAYERS.map(([team, name, numero, ruolo], i) => ({ id: `p${i + 1}`, team, name, numero, ruolo }));
+
+const ROLES = ['Portiere', 'Difensore', 'Centrocampista', 'Attaccante'];
+const ROLE_SHORT = { Portiere: 'POR', Difensore: 'DIF', Centrocampista: 'CEN', Attaccante: 'ATT' };
+const ROLE_COLOR = { Portiere: 'var(--gold)', Difensore: 'var(--teal)', Centrocampista: 'var(--blue)', Attaccante: 'var(--red)' };
+const ADMIN_ID = 'Admin';
+const ADMIN_PIN = '1810';
+
+/* ============================= HELPERS ============================= */
+
+function computeStandings(teams) {
+  return [...teams]
+    .sort((a, b) => b.pts - a.pts || (b.gf - b.gs) - (a.gf - a.gs) || b.gf - a.gf)
+    .map((t, i) => ({ ...t, pos: i + 1 }));
+}
+
+function teamName(teams, id) { return teams.find(t => t.id === id)?.name || id; }
+
+async function callClaude(prompt, { webSearch = true } = {}) {
+  const fullPrompt = prompt + '\n\nRispondi SOLO con il JSON richiesto, compatto (senza spazi/a-capo superflui), senza markdown, senza alcun testo prima o dopo, e senza descrivere la ricerca svolta.';
+  const res = await fetch('/.netlify/functions/ai', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt: fullPrompt, webSearch }),
+  });
+  const data = await res.json();
+  if (data.error) throw new Error('Errore API: ' + (data.error.message || JSON.stringify(data.error)));
+  const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+  if (!text.trim()) throw new Error('Risposta AI vuota: nessun blocco di testo restituito (possibile solo ricerca senza risposta finale, riprova).');
+  const cleaned = text.replace(/```json|```/g, '').trim();
+  const iObj = cleaned.indexOf('{');
+  const iArr = cleaned.indexOf('[');
+  let open, close, start;
+  if (iObj === -1 && iArr === -1) throw new Error('Nessun JSON trovato nella risposta AI:\n' + text.slice(0, 300));
+  if (iObj === -1 || (iArr !== -1 && iArr < iObj)) { open = '['; close = ']'; start = iArr; }
+  else { open = '{'; close = '}'; start = iObj; }
+  const end = cleaned.lastIndexOf(close);
+  if (end === -1 || end < start) throw new Error('La risposta AI sembra incompleta/troncata (JSON senza chiusura). Riprova: se persiste, la richiesta va probabilmente ridotta.\n' + cleaned.slice(0, 300));
+  const jsonStr = cleaned.slice(start, end + 1);
+  try {
+    return JSON.parse(jsonStr);
+  } catch (e) {
+    throw new Error('JSON ricevuto ma non valido, probabilmente troncato (' + e.message + '). Riprova.');
+  }
+}
+
+function calcPuntiUtente(user, giornataData, players) {
+  const righe = [];
+  let total = 0;
+  Object.entries(user.selezione).forEach(([ruolo, playerId]) => {
+    const player = players.find(p => p.id === playerId);
+    if (!player) return;
+    let effectiveId = playerId;
+    let sostituito = false;
+    if (ruolo === 'Portiere') {
+      const stat = giornataData.playerStats?.[playerId];
+      const teamStat = giornataData.teamStats?.[player.team];
+      if (stat && stat.titolare === false && teamStat?.portiereTitolareId) {
+        effectiveId = teamStat.portiereTitolareId;
+        sostituito = true;
+      }
+    }
+    const stat = giornataData.playerStats?.[effectiveId] || {};
+    const teamStat = giornataData.teamStats?.[player.team] || {};
+    let punti = 0;
+    if (ruolo === 'Portiere' || ruolo === 'Difensore') {
+      const golSubiti = teamStat.golSubiti ?? 0;
+      punti += golSubiti === 0 ? 1 : -golSubiti;
+    }
+    punti += (stat.gol || 0) * 3;
+    punti += (stat.assist || 0) * 1;
+    punti += (stat.autogol || 0) * -2;
+    if (stat.ammonito) punti -= 0.5;
+    if (stat.espulso) punti -= 1;
+    righe.push({ ruolo, player, punti, sostituito, effectiveId, stat, golSubiti: teamStat.golSubiti ?? 0 });
+    total += punti;
+  });
+  return { total: Math.round(total * 100) / 100, righe };
+}
+
+function matchTeamId(teams, name) {
+  if (!name) return null;
+  const low = name.toLowerCase();
+  const found = teams.find(t => low.includes(t.name.toLowerCase()) || t.name.toLowerCase().includes(low));
+  return found ? found.id : null;
+}
+
+function useProssimoTurno(teams) {
+  const [state, setState] = useState({ numero: null, partite: [], loading: true, error: '' });
+
+  const fetchTurno = useCallback(async () => {
+    setState(s => ({ ...s, loading: true, error: '' }));
+    try {
+      const prompt = `Cerca online il calendario della Serie A 2026/27 e individua le partite della PROSSIMA giornata di campionato non ancora disputata (o in corso proprio oggi).
+Rispondi con un JSON compatto con tutte le 10 partite, un array [casa,trasferta] per ciascuna:
+{"n":4,"p":[["Roma","Juventus"],["Inter","Milan"]]}`;
+      const data = await callClaude(prompt, { webSearch: true });
+      const righe = data.p || data.partite || [];
+      const partite = righe.map(m => {
+        const casaNome = Array.isArray(m) ? m[0] : m.casa;
+        const trasfertaNome = Array.isArray(m) ? m[1] : m.trasferta;
+        const casaId = matchTeamId(teams, casaNome);
+        const trasfertaId = matchTeamId(teams, trasfertaNome);
+        return casaId && trasfertaId ? { casa: casaId, trasferta: trasfertaId } : null;
+      }).filter(Boolean);
+      const numero = data.n ?? data.giornata ?? null;
+      setState({ numero, partite, loading: false, error: partite.length ? '' : 'Nessuna partita riconosciuta nella risposta.' });
+    } catch (e) {
+      setState({ numero: null, partite: [], loading: false, error: 'Caricamento calendario non riuscito: ' + e.message });
+    }
+  }, [teams]);
+
+  useEffect(() => { fetchTurno(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const setManual = useCallback((numero, partite) => {
+    setState({ numero, partite, loading: false, error: '' });
+  }, []);
+
+  return { ...state, refresh: fetchTurno, setManual };
+}
+
+function matchLabel(nextMatchOf, teamId) {
+  const m = nextMatchOf[teamId];
+  if (!m) return null;
+  return (m.casa ? 'vs ' : '@ ') + m.avversario;
+}
+
+const PARTICELLE = ['de', 'di', 'van', 'der', 'von', 'la', 'le', 'el', 'dos', 'das', 'du', 'bin', 'al'];
+function cognome(nomeCompleto) {
+  const parts = nomeCompleto.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0];
+  let idx = parts.length - 1;
+  while (idx > 0 && PARTICELLE.includes(parts[idx - 1].toLowerCase())) idx--;
+  return parts.slice(idx).join(' ');
+}
+function byCognome(a, b) { return cognome(a.name).localeCompare(cognome(b.name)); }
+
+function shuffleSeeded(arr, seed) {
+  const a = [...arr];
+  let s = Math.floor(seed * 2147483647) || 1;
+  const rand = () => { s = (s * 48271) % 2147483647; return s / 2147483647; };
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+/* ============================= APP ============================= */
+
+function FantacalcioApp() {
+  const [teams, setTeams] = usePersisted('fc_teams_v1', INITIAL_TEAMS);
+  const [players, setPlayers] = usePersisted('fc_players_v1', INITIAL_PLAYERS);
+  const [users, setUsers] = usePersisted('fc_users_v1', []);
+  const [giornate, setGiornate] = usePersisted('fc_giornate_v1', {});
+  const [tab, setTab] = useState('classifica');
+  const [torneo, setTorneo] = usePersisted('fc_torneo_v1', { nome: '', creato: false });
+
+  const eliminaTorneo = useCallback(() => {
+    setTorneo({ nome: '', creato: false });
+    setUsers([]);
+    setGiornate({});
+  }, []);
+
+  const standings = useMemo(() => computeStandings(teams), [teams]);
+  const top6Ids = useMemo(() => standings.slice(0, 6).map(t => t.id), [standings]);
+
+  const prossimoTurno = useProssimoTurno(teams);
+  const nextMatchOf = useMemo(() => {
+    const map = {};
+    prossimoTurno.partite.forEach(({ casa, trasferta }) => {
+      map[casa] = { avversario: trasferta, casa: true };
+      map[trasferta] = { avversario: casa, casa: false };
+    });
+    return map;
+  }, [prossimoTurno.partite]);
+
+  const classificaFanta = useMemo(() => {
+    return [...users]
+      .map(u => {
+        const totale = Object.values(u.storico || {}).reduce((s, g) => s + g.total, 0);
+        return { ...u, totale };
+      })
+      .sort((a, b) => b.totale - a.totale);
+  }, [users]);
+
+  return (
+    <div className="fc-app">
+      <style>{CSS}</style>
+      <header className="fc-header">
+        <div className="fc-title">
+          <Shield size={22} />
+          <div>
+            <h1>{torneo.creato && torneo.nome ? torneo.nome : 'Fantacalcio Semplificato'}</h1>
+            <p>Serie A 2026/27 · dati indicativi, verificabili e aggiornabili</p>
+          </div>
+        </div>
+        <nav className="fc-nav">
+          <NavBtn active={tab === 'classifica'} onClick={() => setTab('classifica')} icon={<Trophy size={16} />} label="Classifica" />
+          <NavBtn active={tab === 'rose'} onClick={() => setTab('rose')} icon={<Users size={16} />} label="Rose" />
+          <NavBtn active={tab === 'formazioni'} onClick={() => setTab('formazioni')} icon={<Shield size={16} />} label="Formazioni" />
+          <NavBtn active={tab === 'punteggi'} onClick={() => setTab('punteggi')} icon={<Calculator size={16} />} label="Punteggi" />
+          <NavBtn active={tab === 'dati'} onClick={() => setTab('dati')} icon={<Database size={16} />} label="Dati" />
+        </nav>
+        <FixtureBar turno={prossimoTurno} />
+      </header>
+
+      <main className="fc-main">
+        {tab === 'classifica' && <ClassificaTab teams={teams} setTeams={setTeams} standings={standings} top6Ids={top6Ids} />}
+        {tab === 'rose' && <RoseTab teams={teams} players={players} setPlayers={setPlayers} top6Ids={top6Ids} nextMatchOf={nextMatchOf} />}
+        {tab === 'formazioni' && (
+          <FormazioniTab
+            players={players} users={users} setUsers={setUsers} top6Ids={top6Ids} teams={teams} nextMatchOf={nextMatchOf}
+            torneo={torneo} setTorneo={setTorneo} onDeleteTorneo={eliminaTorneo} classificaFanta={classificaFanta} giornataCorrente={prossimoTurno.numero}
+          />
+        )}
+        {tab === 'punteggi' && (
+          <PunteggiTab
+            players={players} users={users} setUsers={setUsers} teams={teams}
+            giornate={giornate} setGiornate={setGiornate} classificaFanta={classificaFanta}
+          />
+        )}
+        {tab === 'dati' && (
+          <DatiTab
+            players={players} setPlayers={setPlayers} teams={teams} setTeams={setTeams}
+            prossimoTurno={prossimoTurno}
+          />
+        )}
+      </main>
+    </div>
+  );
+}
+
+function NavBtn({ active, onClick, icon, label }) {
+  return (
+    <button className={`fc-navbtn ${active ? 'active' : ''}`} onClick={onClick}>
+      {icon}<span>{label}</span>
+    </button>
+  );
+}
+
+function FixtureBar({ turno }) {
+  return (
+    <div className="fc-fixturebar">
+      <Calendar size={14} className="fc-dim" />
+      {turno.loading ? (
+        <span className="fc-dim"><RefreshCw size={12} className="spin" style={{ verticalAlign: 'middle', marginRight: 4 }} />Carico il calendario della prossima giornata…</span>
+      ) : turno.error ? (
+        <span className="fc-error-inline">{turno.error}</span>
+      ) : (
+        <span>Prossima giornata{turno.numero ? ` (G${turno.numero})` : ''}: {turno.partite.map(p => `${p.casa}-${p.trasferta}`).join(' · ')}</span>
+      )}
+      <button className="fc-icon-btn" onClick={turno.refresh} title="Aggiorna calendario"><RefreshCw size={13} className={turno.loading ? 'spin' : ''} /></button>
+    </div>
+  );
+}
+
+/* ============================= TAB: CLASSIFICA ============================= */
+
+function ClassificaTab({ teams, setTeams, standings, top6Ids }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [editing, setEditing] = useState(null);
+
+  const aggiornaConAI = useCallback(async () => {
+    setLoading(true); setError('');
+    try {
+      const prompt = `Cerca online la classifica AGGIORNATA e ATTUALE della Serie A italiana di calcio 2026/27 (20 squadre).
+Rispondi con un JSON compatto in questo formato esatto, un array per squadra [nome,punti,partite_giocate,gol_fatti,gol_subiti], per TUTTE le 20 squadre:
+{"t":[["Roma",9,3,10,1],["Inter",9,3,8,2]]}`;
+      const data = await callClaude(prompt, { webSearch: true });
+      const righe = data.t || data.teams || [];
+      setTeams(prev => prev.map(t => {
+        const found = righe.find(r => {
+          const nome = Array.isArray(r) ? r[0] : r.nome;
+          return nome && (nome.toLowerCase().includes(t.name.toLowerCase()) || t.name.toLowerCase().includes(nome.toLowerCase()));
+        });
+        if (!found) return t;
+        const [, punti, pg, gf, gs] = Array.isArray(found) ? found : [found.nome, found.punti, found.partite_giocate, found.gol_fatti, found.gol_subiti];
+        return { ...t, pts: punti ?? t.pts, played: pg ?? t.played, gf: gf ?? t.gf, gs: gs ?? t.gs };
+      }));
+    } catch (e) {
+      setError('Aggiornamento non riuscito: ' + e.message);
+    } finally { setLoading(false); }
+  }, [setTeams]);
+
+  const saveEdit = (id, field, value) => {
+    setTeams(prev => prev.map(t => t.id === id ? { ...t, [field]: Number(value) || 0 } : t));
+  };
+
+  return (
+    <div className="fc-panel">
+      <div className="fc-panel-head">
+        <h2>Classifica Serie A</h2>
+        <button className="fc-btn" onClick={aggiornaConAI} disabled={loading}>
+          <RefreshCw size={14} className={loading ? 'spin' : ''} /> {loading ? 'Aggiorno…' : 'Aggiorna con AI'}
+        </button>
+      </div>
+      {error && <div className="fc-error">{error}</div>}
+      <table className="fc-table">
+        <thead>
+          <tr><th>#</th><th>Squadra</th><th>Pt</th><th>PG</th><th>GF</th><th>GS</th><th></th></tr>
+        </thead>
+        <tbody>
+          {standings.map(t => (
+            <tr key={t.id} className={top6Ids.includes(t.id) ? 'top6' : ''}>
+              <td className="mono">{t.pos}</td>
+              <td>{t.name}{top6Ids.includes(t.id) && <Star size={12} className="fc-star" />}</td>
+              {editing === t.id ? (
+                <>
+                  <td><input className="fc-input-cell" defaultValue={t.pts} onBlur={e => saveEdit(t.id, 'pts', e.target.value)} /></td>
+                  <td><input className="fc-input-cell" defaultValue={t.played} onBlur={e => saveEdit(t.id, 'played', e.target.value)} /></td>
+                  <td><input className="fc-input-cell" defaultValue={t.gf} onBlur={e => saveEdit(t.id, 'gf', e.target.value)} /></td>
+                  <td><input className="fc-input-cell" defaultValue={t.gs} onBlur={e => saveEdit(t.id, 'gs', e.target.value)} /></td>
+                </>
+              ) : (
+                <>
+                  <td className="mono">{t.pts}</td><td className="mono">{t.played}</td><td className="mono">{t.gf}</td><td className="mono">{t.gs}</td>
+                </>
+              )}
+              <td>
+                <button className="fc-icon-btn" onClick={() => setEditing(editing === t.id ? null : t.id)}>
+                  {editing === t.id ? <Check size={14} /> : <Pencil size={14} />}
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="fc-note">Le squadre con la stella sono attualmente tra le prime 6: solo un giocatore per formazione può appartenere a una di queste.</p>
+      <p className="fc-note">Rose stagione 2026/27 complete per tutte le 20 squadre (fonte pubblica, agg. inizio settembre 2026).</p>
+    </div>
+  );
+}
+
+/* ============================= TAB: ROSE ============================= */
+
+function RoseTab({ teams, players, setPlayers, top6Ids, nextMatchOf }) {
+  const [selectedTeam, setSelectedTeam] = useState(teams[0]?.id);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [newPlayer, setNewPlayer] = useState({ name: '', ruolo: 'Centrocampista' });
+  const [query, setQuery] = useState('');
+
+  const label = (p) => p.name + (top6Ids.includes(p.team) ? ' (C)' : '');
+  const q = query.trim().toLowerCase();
+
+  // con ricerca attiva: tutti i calciatori che corrispondono, di qualunque squadra, comunque divisi per ruolo
+  // senza ricerca: solo i calciatori della squadra selezionata
+  const base = q
+    ? players.filter(p => p.name.toLowerCase().includes(q) || teamName(teams, p.team).toLowerCase().includes(q))
+    : players.filter(p => p.team === selectedTeam);
+
+  const aggiornaRosaConAI = useCallback(async () => {
+    setLoading(true); setError('');
+    try {
+      const nome = teamName(teams, selectedTeam);
+      const prompt = `Cerca online la rosa ATTUALE (stagione 2026/27) della squadra di Serie A "${nome}".
+Includi la rosa il più completa possibile (fino a 30 giocatori), un array [nome,ruolo] per ciascuno, dove ruolo è una lettera: P=Portiere, D=Difensore, C=Centrocampista, A=Attaccante.
+Rispondi con un JSON compatto in questo formato esatto:
+{"g":[["Mario Rossi","P"],["Luca Bianchi","D"]]}`;
+      const data = await callClaude(prompt, { webSearch: true });
+      const RUOLO_LETTERA = { P: 'Portiere', D: 'Difensore', C: 'Centrocampista', A: 'Attaccante' };
+      const righe = data.g || data.giocatori || [];
+      const nuovi = righe.map((g, i) => {
+        const nomeG = Array.isArray(g) ? g[0] : g.nome;
+        const ruoloRaw = Array.isArray(g) ? g[1] : g.ruolo;
+        const ruolo = RUOLO_LETTERA[ruoloRaw] || ruoloRaw;
+        return { id: `${selectedTeam}-ai-${i}-${Date.now()}`, team: selectedTeam, name: nomeG, ruolo };
+      }).filter(g => g.name && ROLES.includes(g.ruolo));
+      if (nuovi.length === 0) throw new Error('nessun giocatore valido nella risposta');
+      setPlayers(prev => [...prev.filter(p => p.team !== selectedTeam), ...nuovi]);
+    } catch (e) {
+      setError('Aggiornamento non riuscito: ' + e.message);
+    } finally { setLoading(false); }
+  }, [selectedTeam, teams, setPlayers]);
+
+  const addPlayer = () => {
+    if (!newPlayer.name.trim()) return;
+    setPlayers(prev => [...prev, { id: `${selectedTeam}-m-${Date.now()}`, team: selectedTeam, name: newPlayer.name.trim(), ruolo: newPlayer.ruolo }]);
+    setNewPlayer({ name: '', ruolo: 'Centrocampista' });
+  };
+
+  const removePlayer = (id) => setPlayers(prev => prev.filter(p => p.id !== id));
+
+  return (
+    <div className="fc-panel">
+      <div className="fc-panel-head">
+        <h2>Rose Serie A</h2>
+        <select className="fc-select" value={selectedTeam} onChange={e => setSelectedTeam(e.target.value)}>
+          {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+        <button className="fc-btn" onClick={aggiornaRosaConAI} disabled={loading}>
+          <RefreshCw size={14} className={loading ? 'spin' : ''} /> {loading ? 'Aggiorno…' : 'Aggiorna rosa con AI'}
+        </button>
+      </div>
+
+      <div className="fc-search-row">
+        <Search size={14} className="fc-dim" />
+        <input className="fc-input fc-search-input" placeholder="Cerca per squadra o per calciatore…" value={query} onChange={e => setQuery(e.target.value)} />
+        {query && <button className="fc-icon-btn" onClick={() => setQuery('')}><X size={14} /></button>}
+      </div>
+
+      {error && <div className="fc-error">{error}</div>}
+
+      <div className="fc-roster-grid">
+        {ROLES.map(ruolo => (
+          <div key={ruolo} className="fc-roster-col">
+            <h3 style={{ color: ROLE_COLOR[ruolo] }}>{ruolo}</h3>
+            {base.filter(p => p.ruolo === ruolo).sort(byCognome).map(p => (
+              <div key={p.id} className="fc-player-row">
+                <span className="fc-player-name">{label(p)}{q ? <span className="fc-dim"> · {teamName(teams, p.team)}</span> : null}</span>
+                <span className="mono fc-dim fc-next">{matchLabel(nextMatchOf, p.team) || '—'}</span>
+                {!q && <button className="fc-icon-btn" onClick={() => removePlayer(p.id)}><X size={13} /></button>}
+              </div>
+            ))}
+            {base.filter(p => p.ruolo === ruolo).length === 0 && <p className="fc-note">Nessun risultato.</p>}
+          </div>
+        ))}
+      </div>
+
+      <div className="fc-add-row">
+        <input className="fc-input" placeholder="Nome calciatore" value={newPlayer.name} onChange={e => setNewPlayer(n => ({ ...n, name: e.target.value }))} />
+        <select className="fc-select" value={newPlayer.ruolo} onChange={e => setNewPlayer(n => ({ ...n, ruolo: e.target.value }))}>
+          {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+        </select>
+        <button className="fc-btn" onClick={addPlayer}><Plus size={14} /> Aggiungi</button>
+      </div>
+      <p className="fc-note">"(C)" indica che il calciatore milita in una squadra attualmente tra le prime 6 in classifica. Elenco ordinato per cognome. "Prossima" mostra l'avversario del turno in arrivo ("vs" = in casa, "@" = in trasferta).</p>
+    </div>
+  );
+}
+
+/* ============================= TAB: FORMAZIONI ============================= */
+
+function FormazioniTab({ players, users, setUsers, top6Ids, teams, nextMatchOf, torneo, setTorneo, onDeleteTorneo, classificaFanta, giornataCorrente }) {
+  const [nomeTorneo, setNomeTorneo] = useState('');
+  const [editingTorneo, setEditingTorneo] = useState(false);
+  const [editNome, setEditNome] = useState('');
+
+  const [currentUserId, setCurrentUserId] = useState(null);
+  const [authMode, setAuthMode] = useState('login'); // 'login' | 'register'
+
+  // login form
+  const [loginId, setLoginId] = useState('');
+  const [loginPin, setLoginPin] = useState('');
+  const [loginError, setLoginError] = useState('');
+
+  // registration form
+  const [regOwner, setRegOwner] = useState('');
+  const [regTeam, setRegTeam] = useState('');
+  const [regPin, setRegPin] = useState('');
+  const [regPinConfirm, setRegPinConfirm] = useState('');
+  const [regError, setRegError] = useState('');
+
+  // formation editor
+  const [sel, setSel] = useState({ Portiere: '', Difensore: '', Centrocampista: '', Attaccante: '' });
+  const [formError, setFormError] = useState('');
+  const [query, setQuery] = useState('');
+
+  // turno di scelta
+  const [seed] = useState(() => Math.random());
+  const [turnIndex, setTurnIndex] = useState(0);
+  const [giornataVista, setGiornataVista] = useState(null);
+
+  // amministratore
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [adminIdInput, setAdminIdInput] = useState('');
+  const [adminPinInput, setAdminPinInput] = useState('');
+  const [adminLoginError, setAdminLoginError] = useState('');
+  const [adminEditingId, setAdminEditingId] = useState(null);
+  const [adminSel, setAdminSel] = useState({ Portiere: '', Difensore: '', Centrocampista: '', Attaccante: '' });
+  const [adminFormError, setAdminFormError] = useState('');
+  const [adminQuery, setAdminQuery] = useState('');
+  const [editingInfoId, setEditingInfoId] = useState(null);
+  const [infoOwner, setInfoOwner] = useState('');
+  const [infoTeam, setInfoTeam] = useState('');
+  const [infoPin, setInfoPin] = useState('');
+
+  const currentUser = users.find(u => u.id === currentUserId) || null;
+  const label = (p) => p.name + (top6Ids.includes(p.team) ? ' (C)' : '');
+
+  const q = query.trim().toLowerCase();
+  const byRole = (ruolo) => players
+    .filter(p => p.ruolo === ruolo)
+    .filter(p => !q || p.name.toLowerCase().includes(q) || teamName(teams, p.team).toLowerCase().includes(q))
+    .sort(byCognome);
+
+  const aq = adminQuery.trim().toLowerCase();
+  const adminByRole = (ruolo) => players
+    .filter(p => p.ruolo === ruolo)
+    .filter(p => !aq || p.name.toLowerCase().includes(aq) || teamName(teams, p.team).toLowerCase().includes(aq))
+    .sort(byCognome);
+
+  const hasStorico = users.some(u => Object.keys(u.storico || {}).length > 0);
+  const turnOrder = useMemo(() => {
+    if (users.length === 0) return [];
+    if (hasStorico) return [...classificaFanta].map(u => u.id).reverse(); // ultimo in classifica sceglie per primo
+    return shuffleSeeded(users.map(u => u.id), seed); // prima giornata: ordine casuale
+  }, [users, classificaFanta, hasStorico, seed]);
+
+  // ogni volta che cambia la giornata in arrivo, si riparte con una nuova coda e formazioni vuote
+  useEffect(() => {
+    if (giornataCorrente && giornataCorrente !== giornataVista) {
+      setGiornataVista(giornataCorrente);
+      setTurnIndex(0);
+      setUsers(prev => prev.map(u => ({ ...u, selezione: { Portiere: '', Difensore: '', Centrocampista: '', Attaccante: '' }, capitanoRuolo: null })));
+    }
+  }, [giornataCorrente]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { if (currentUser) setSel({ ...currentUser.selezione }); }, [currentUserId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const turnoUtenteId = turnOrder[turnIndex];
+  const isMyTurn = !!currentUser && turnoUtenteId === currentUser.id;
+  const turnoUtente = users.find(u => u.id === turnoUtenteId);
+
+  const creaTorneo = () => {
+    if (!nomeTorneo.trim()) return;
+    setTorneo({ nome: nomeTorneo.trim(), creato: true });
+  };
+
+  const iniziaModificaTorneo = () => { setEditNome(torneo.nome); setEditingTorneo(true); };
+  const salvaModificaTorneo = () => {
+    if (!editNome.trim()) return;
+    setTorneo({ ...torneo, nome: editNome.trim() });
+    setEditingTorneo(false);
+  };
+  const eliminaTorneoConConferma = () => {
+    if (window.confirm(`Eliminare il torneo "${torneo.nome}"? Verranno cancellate anche tutte le squadre iscritte e i punteggi calcolati.`)) {
+      onDeleteTorneo();
+    }
+  };
+
+  const doLogin = () => {
+    setLoginError('');
+    const u = users.find(x => x.id === loginId);
+    if (!u) { setLoginError('Seleziona la tua squadra.'); return; }
+    if (u.pin !== loginPin) { setLoginError('PIN errato.'); return; }
+    setCurrentUserId(u.id);
+    setSel({ ...u.selezione });
+    setLoginPin('');
+  };
+
+  const doRegister = () => {
+    setRegError('');
+    if (!regOwner.trim() || !regTeam.trim()) { setRegError('Inserisci il tuo nome e il nome della squadra.'); return; }
+    if (regPin.length < 4) { setRegError('Il PIN deve avere almeno 4 caratteri.'); return; }
+    if (regPin !== regPinConfirm) { setRegError('I due PIN inseriti non coincidono.'); return; }
+    if (users.some(u => u.teamName.toLowerCase() === regTeam.trim().toLowerCase())) { setRegError('Esiste già una squadra con questo nome.'); return; }
+    const newUser = { id: `u${Date.now()}`, ownerName: regOwner.trim(), teamName: regTeam.trim(), pin: regPin, selezione: { Portiere: '', Difensore: '', Centrocampista: '', Attaccante: '' }, capitanoRuolo: null, storico: {} };
+    setUsers(prev => [...prev, newUser]);
+    setCurrentUserId(newUser.id);
+    setSel({ ...newUser.selezione });
+    setRegOwner(''); setRegTeam(''); setRegPin(''); setRegPinConfirm('');
+  };
+
+  const logout = () => {
+    setCurrentUserId(null); setSel({ Portiere: '', Difensore: '', Centrocampista: '', Attaccante: '' }); setFormError('');
+    setLoginId(''); setLoginPin('');
+  };
+
+  const eliminaIscrizione = () => {
+    if (!currentUserId) return;
+    setUsers(prev => prev.filter(u => u.id !== currentUserId));
+    logout();
+  };
+
+  const doAdminLogin = () => {
+    setAdminLoginError('');
+    if (adminIdInput.trim() !== ADMIN_ID || adminPinInput !== ADMIN_PIN) { setAdminLoginError('Credenziali amministratore errate.'); return; }
+    setIsAdmin(true);
+    setAdminIdInput(''); setAdminPinInput('');
+  };
+  const adminLogout = () => { setIsAdmin(false); setAdminEditingId(null); setEditingInfoId(null); };
+
+  const adminStartEdit = (u) => { setAdminEditingId(u.id); setAdminSel({ ...u.selezione }); setAdminFormError(''); setAdminQuery(''); };
+  const adminSaveFormazione = () => {
+    setAdminFormError('');
+    if (ROLES.some(r => !adminSel[r])) { setAdminFormError('Seleziona un calciatore per ciascuno dei 4 ruoli.'); return; }
+    const scelti = ROLES.map(r => players.find(p => p.id === adminSel[r]));
+    const inTop6 = scelti.filter(p => top6Ids.includes(p.team));
+    if (inTop6.length > 1) {
+      setAdminFormError(`Solo un giocatore può appartenere a una squadra Top 6: hai selezionato ${inTop6.length} (${inTop6.map(p => p.name).join(', ')}).`);
+      return;
+    }
+    const capitanoRuolo = inTop6.length === 1 ? ROLES.find(r => adminSel[r] === inTop6[0].id) : null;
+    setUsers(prev => prev.map(u => u.id === adminEditingId ? { ...u, selezione: { ...adminSel }, capitanoRuolo } : u));
+    setAdminEditingId(null);
+  };
+
+  const adminDeleteUser = (id) => {
+    const u = users.find(x => x.id === id);
+    if (window.confirm(`Eliminare la squadra "${u?.teamName}"?`)) {
+      setUsers(prev => prev.filter(x => x.id !== id));
+      if (adminEditingId === id) setAdminEditingId(null);
+      if (currentUserId === id) logout();
+    }
+  };
+
+  const adminStartEditInfo = (u) => { setEditingInfoId(u.id); setInfoOwner(u.ownerName); setInfoTeam(u.teamName); setInfoPin(u.pin); };
+  const adminSaveInfo = () => {
+    setUsers(prev => prev.map(u => u.id === editingInfoId ? { ...u, ownerName: infoOwner.trim() || u.ownerName, teamName: infoTeam.trim() || u.teamName, pin: infoPin.trim() || u.pin } : u));
+    setEditingInfoId(null);
+  };
+
+  const adminForzaTurno = (uid) => {
+    const idx = turnOrder.indexOf(uid);
+    if (idx >= 0) setTurnIndex(idx);
+  };
+
+  const submitFormazione = () => {
+    setFormError('');
+    if (!isMyTurn) { setFormError('Non è ancora il tuo turno.'); return; }
+    if (ROLES.some(r => !sel[r])) { setFormError('Seleziona un calciatore per ciascuno dei 4 ruoli.'); return; }
+    const scelti = ROLES.map(r => players.find(p => p.id === sel[r]));
+    const inTop6 = scelti.filter(p => top6Ids.includes(p.team));
+    if (inTop6.length > 1) {
+      setFormError(`Solo un giocatore può appartenere a una squadra Top 6: hai selezionato ${inTop6.length} (${inTop6.map(p => p.name).join(', ')}).`);
+      return;
+    }
+    const capitanoRuolo = inTop6.length === 1 ? ROLES.find(r => sel[r] === inTop6[0].id) : null;
+    setUsers(prev => prev.map(u => u.id === currentUserId ? { ...u, selezione: { ...sel }, capitanoRuolo } : u));
+    setTurnIndex(i => Math.min(i + 1, turnOrder.length));
+  };
+
+  if (!torneo.creato) {
+    return (
+      <div className="fc-panel">
+        <div className="fc-panel-head"><h2>Crea il torneo</h2></div>
+        <div className="fc-form-card">
+          <p className="fc-note">Prima di iscrivere i partecipanti va creato il torneo. Dai un nome e poi si potrà iniziare a iscrivere le squadre.</p>
+          <input className="fc-input" placeholder="Nome del torneo" value={nomeTorneo} onChange={e => setNomeTorneo(e.target.value)} />
+          <button className="fc-btn primary" onClick={creaTorneo}><Plus size={14} /> Crea torneo</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fc-panel">
+      <div className="fc-panel-head">
+        {editingTorneo ? (
+          <>
+            <input className="fc-input" value={editNome} onChange={e => setEditNome(e.target.value)} />
+            <button className="fc-btn primary" onClick={salvaModificaTorneo}><Check size={14} /> Salva</button>
+            <button className="fc-btn" onClick={() => setEditingTorneo(false)}><X size={14} /> Annulla</button>
+          </>
+        ) : (
+          <>
+            <h2>{torneo.nome}</h2>
+            <button className="fc-icon-btn" onClick={iniziaModificaTorneo} title="Rinomina torneo"><Pencil size={14} /></button>
+            <button className="fc-icon-btn" onClick={eliminaTorneoConConferma} title="Elimina torneo"><Trash2 size={14} /></button>
+          </>
+        )}
+      </div>
+
+      {turnOrder.length > 0 && (
+        <div className="fc-turnbar">
+          <strong>Ordine di scelta{giornataCorrente ? ` · giornata ${giornataCorrente}` : ''}{!hasStorico ? ' (casuale)' : ' (inverso alla classifica)'}:</strong>
+          <ol className="fc-turnlist">
+            {turnOrder.map((uid, i) => {
+              const u = users.find(x => x.id === uid);
+              if (!u) return null;
+              return <li key={uid} className={i === turnIndex ? 'current' : i < turnIndex ? 'done' : ''}>{u.teamName}</li>;
+            })}
+          </ol>
+        </div>
+      )}
+
+      {isAdmin ? (
+        <div className="fc-form-card">
+          <div className="fc-user-head">
+            <strong>Amministratore</strong>
+            <button className="fc-icon-btn" onClick={adminLogout} title="Esci"><LogOut size={14} /></button>
+          </div>
+          <p className="fc-note">Pieni poteri: puoi modificare dati, formazione o eliminare qualsiasi squadra dai riquadri qui sotto, senza vincoli di turno o PIN.</p>
+        </div>
+      ) : !currentUser ? (
+        <div className="fc-form-card">
+          <div className="fc-authtabs">
+            <button className={`fc-navbtn ${authMode === 'login' ? 'active' : ''}`} onClick={() => setAuthMode('login')}>Accedi</button>
+            <button className={`fc-navbtn ${authMode === 'register' ? 'active' : ''}`} onClick={() => setAuthMode('register')}>Iscrivi nuova squadra</button>
+            <button className={`fc-navbtn ${authMode === 'admin' ? 'active' : ''}`} onClick={() => setAuthMode('admin')}>Amministratore</button>
+          </div>
+
+          {authMode === 'login' && (
+            <>
+              <div className="fc-form-selects">
+                <select className="fc-select" value={loginId} onChange={e => setLoginId(e.target.value)}>
+                  <option value="">Seleziona la tua squadra…</option>
+                  {users.map(u => <option key={u.id} value={u.id}>{u.teamName}</option>)}
+                </select>
+                <input className="fc-input" type="password" placeholder="PIN" value={loginPin} onChange={e => setLoginPin(e.target.value)} />
+              </div>
+              {loginError && <div className="fc-error">{loginError}</div>}
+              <button className="fc-btn primary" onClick={doLogin}><Lock size={14} /> Accedi</button>
+              {users.length === 0 && <p className="fc-note">Nessuna squadra ancora iscritta: passa a "Iscrivi nuova squadra".</p>}
+            </>
+          )}
+
+          {authMode === 'register' && (
+            <>
+              <div className="fc-form-selects">
+                <input className="fc-input" placeholder="Il tuo nome" value={regOwner} onChange={e => setRegOwner(e.target.value)} />
+                <input className="fc-input" placeholder="Nome della squadra" value={regTeam} onChange={e => setRegTeam(e.target.value)} />
+                <input className="fc-input" type="password" placeholder="Scegli un PIN" value={regPin} onChange={e => setRegPin(e.target.value)} />
+                <input className="fc-input" type="password" placeholder="Conferma PIN" value={regPinConfirm} onChange={e => setRegPinConfirm(e.target.value)} />
+              </div>
+              {regError && <div className="fc-error">{regError}</div>}
+              <button className="fc-btn primary" onClick={doRegister}><Plus size={14} /> Iscrivi squadra</button>
+              <p className="fc-note">Conserva il PIN: serve per accedere di nuovo e modificare la tua formazione.</p>
+            </>
+          )}
+
+          {authMode === 'admin' && (
+            <>
+              <div className="fc-form-selects">
+                <input className="fc-input" placeholder="Userid" value={adminIdInput} onChange={e => setAdminIdInput(e.target.value)} />
+                <input className="fc-input" type="password" placeholder="PIN" value={adminPinInput} onChange={e => setAdminPinInput(e.target.value)} />
+              </div>
+              {adminLoginError && <div className="fc-error">{adminLoginError}</div>}
+              <button className="fc-btn primary" onClick={doAdminLogin}><Lock size={14} /> Accedi come amministratore</button>
+            </>
+          )}
+        </div>
+      ) : (
+        <div className="fc-form-card">
+          <div className="fc-user-head">
+            <div>
+              <strong>{currentUser.teamName}</strong>
+              <span className="fc-dim"> · {currentUser.ownerName}</span>
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button className="fc-icon-btn" onClick={eliminaIscrizione} title="Cancella iscrizione"><Trash2 size={14} /></button>
+              <button className="fc-icon-btn" onClick={logout} title="Esci"><LogOut size={14} /></button>
+            </div>
+          </div>
+
+          {!isMyTurn ? (
+            <p className="fc-note">Non è ancora il tuo turno: tocca a <strong>{turnoUtente?.teamName || '—'}</strong> (posizione {turnIndex + 1} di {turnOrder.length}). Potrai schierare la formazione quando arriverà il tuo turno.</p>
+          ) : (
+            <>
+              <div className="fc-search-row">
+                <Search size={14} className="fc-dim" />
+                <input className="fc-input fc-search-input" placeholder="Cerca calciatore o squadra…" value={query} onChange={e => setQuery(e.target.value)} />
+                {query && <button className="fc-icon-btn" onClick={() => setQuery('')}><X size={14} /></button>}
+              </div>
+              <div className="fc-form-selects">
+                {ROLES.map(r => (
+                  <select key={r} className="fc-select" value={sel[r]} onChange={e => setSel(s => ({ ...s, [r]: e.target.value }))}>
+                    <option value="">{r}…</option>
+                    {byRole(r).map(p => <option key={p.id} value={p.id}>{label(p)} ({p.team} · {matchLabel(nextMatchOf, p.team) || 'n/d'})</option>)}
+                  </select>
+                ))}
+              </div>
+              {formError && <div className="fc-error">{formError}</div>}
+              <button className="fc-btn primary" onClick={submitFormazione}><Check size={14} /> Salva formazione</button>
+            </>
+          )}
+        </div>
+      )}
+
+      <div className="fc-users-grid">
+        {users.map(u => (
+          <div key={u.id} className={`fc-user-card ${u.id === currentUserId ? 'mine' : ''}`}>
+            <div className="fc-user-head">
+              <div>
+                <strong>{u.teamName}</strong>
+                <span className="fc-dim"> · {u.ownerName}</span>
+              </div>
+              <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                {u.id === currentUserId && <span className="fc-tag-mine">tu</span>}
+                {isAdmin && (
+                  <>
+                    <button className="fc-icon-btn" onClick={() => adminForzaTurno(u.id)} title="Forza il turno su questa squadra"><Users size={13} /></button>
+                    <button className="fc-icon-btn" onClick={() => adminStartEditInfo(u)} title="Modifica dati"><Pencil size={13} /></button>
+                    <button className="fc-icon-btn" onClick={() => adminStartEdit(u)} title="Modifica formazione"><Shield size={13} /></button>
+                    <button className="fc-icon-btn" onClick={() => adminDeleteUser(u.id)} title="Elimina squadra"><Trash2 size={13} /></button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {editingInfoId === u.id && (
+              <div className="fc-admin-inline">
+                <input className="fc-input" value={infoOwner} onChange={e => setInfoOwner(e.target.value)} placeholder="Nome proprietario" />
+                <input className="fc-input" value={infoTeam} onChange={e => setInfoTeam(e.target.value)} placeholder="Nome squadra" />
+                <input className="fc-input" value={infoPin} onChange={e => setInfoPin(e.target.value)} placeholder="PIN" />
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button className="fc-btn primary" onClick={adminSaveInfo}><Check size={13} /> Salva</button>
+                  <button className="fc-btn" onClick={() => setEditingInfoId(null)}><X size={13} /> Annulla</button>
+                </div>
+              </div>
+            )}
+
+            <PitchView players={players} teams={teams} selezione={u.selezione} capitanoRuolo={u.capitanoRuolo} nextMatchOf={nextMatchOf} />
+          </div>
+        ))}
+        {users.length === 0 && <p className="fc-note">Nessuna squadra ancora iscritta al torneo.</p>}
+      </div>
+
+      {isAdmin && adminEditingId && (
+        <div className="fc-form-card">
+          <div className="fc-user-head">
+            <strong>Modifica formazione: {users.find(u => u.id === adminEditingId)?.teamName}</strong>
+            <button className="fc-icon-btn" onClick={() => setAdminEditingId(null)}><X size={14} /></button>
+          </div>
+          <div className="fc-search-row">
+            <Search size={14} className="fc-dim" />
+            <input className="fc-input fc-search-input" placeholder="Cerca calciatore o squadra…" value={adminQuery} onChange={e => setAdminQuery(e.target.value)} />
+            {adminQuery && <button className="fc-icon-btn" onClick={() => setAdminQuery('')}><X size={14} /></button>}
+          </div>
+          <div className="fc-form-selects">
+            {ROLES.map(r => (
+              <select key={r} className="fc-select" value={adminSel[r]} onChange={e => setAdminSel(s => ({ ...s, [r]: e.target.value }))}>
+                <option value="">{r}…</option>
+                {adminByRole(r).map(p => <option key={p.id} value={p.id}>{label(p)} ({p.team} · {matchLabel(nextMatchOf, p.team) || 'n/d'})</option>)}
+              </select>
+            ))}
+          </div>
+          {adminFormError && <div className="fc-error">{adminFormError}</div>}
+          <button className="fc-btn primary" onClick={adminSaveFormazione}><Check size={14} /> Salva formazione (admin)</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PitchView({ players, teams, selezione, capitanoRuolo, nextMatchOf }) {
+  const order = ['Attaccante', 'Centrocampista', 'Difensore', 'Portiere'];
+  return (
+    <div className="fc-pitch">
+      {order.map(r => {
+        const p = players.find(pl => pl.id === selezione[r]);
+        return (
+          <div key={r} className="fc-pitch-row">
+            <span className="fc-role-tag" style={{ color: ROLE_COLOR[r] }}>{ROLE_SHORT[r]}</span>
+            {p ? (
+              <span className="fc-pitch-player">
+                {p.name} <span className="mono fc-dim">· {teamName(teams, p.team)} · {matchLabel(nextMatchOf, p.team) || 'n/d'}</span>
+                {capitanoRuolo === r && <span className="fc-cap-tag"><Star size={12} className="fc-star" /> (C)</span>}
+              </span>
+            ) : <span className="fc-dim">—</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ============================= TAB: PUNTEGGI ============================= */
+
+function PunteggiTab({ players, users, setUsers, teams, giornate, setGiornate, classificaFanta }) {
+  const [giornataNum, setGiornataNum] = useState(1);
+  const [draft, setDraft] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const coinvolti = useMemo(() => {
+    const ids = new Set();
+    users.forEach(u => Object.values(u.selezione).forEach(id => id && ids.add(id)));
+    return players.filter(p => ids.has(p.id));
+  }, [users, players]);
+  const teamsCoinvolti = useMemo(() => [...new Set(coinvolti.map(p => p.team))], [coinvolti]);
+
+  const proponiConAI = useCallback(async () => {
+    setLoading(true); setError('');
+    try {
+      const elenco = coinvolti.map(p => `${p.id}: ${p.name} (${teamName(teams, p.team)}, ${p.ruolo})`).join('\n');
+      const squadre = teamsCoinvolti.map(id => `${id}: ${teamName(teams, id)}`).join('\n');
+      const prompt = `Cerca online i risultati REALI della giornata ${giornataNum} del campionato di Serie A 2026/27.
+Per le seguenti squadre, indica quanti gol hanno SUBITO in quella giornata e chi era il portiere titolare:
+${squadre}
+
+Per i seguenti calciatori, indica gol fatti, assist, autogol, se ammonito, se espulso, se ha giocato da titolare:
+${elenco}
+
+Rispondi SOLO con un oggetto JSON, nessun testo prima o dopo, in questo formato:
+{"teamStats":{"CODICE_SQUADRA":{"golSubiti":0,"portiereTitolareId":"id_giocatore_titolare_se_presente_in_elenco_altrimenti_null"}},
+"playerStats":{"id_giocatore":{"gol":0,"assist":0,"autogol":0,"ammonito":false,"espulso":false,"titolare":true}}}`;
+      const data = await callClaude(prompt, { webSearch: true });
+      setDraft(data);
+    } catch (e) {
+      setError('Proposta AI non riuscita: ' + e.message + '. Puoi comunque compilare i dati manualmente qui sotto.');
+      setDraft({ teamStats: Object.fromEntries(teamsCoinvolti.map(id => [id, { golSubiti: 0, portiereTitolareId: null }])), playerStats: Object.fromEntries(coinvolti.map(p => [p.id, { gol: 0, assist: 0, autogol: 0, ammonito: false, espulso: false, titolare: true }])) });
+    } finally { setLoading(false); }
+  }, [coinvolti, teamsCoinvolti, teams, giornataNum]);
+
+  const updateTeamStat = (teamId, field, value) => {
+    setDraft(d => ({ ...d, teamStats: { ...d.teamStats, [teamId]: { ...d.teamStats[teamId], [field]: field === 'golSubiti' ? Number(value) || 0 : value } } }));
+  };
+  const updatePlayerStat = (pid, field, value) => {
+    setDraft(d => ({ ...d, playerStats: { ...d.playerStats, [pid]: { ...d.playerStats[pid], [field]: value } } }));
+  };
+
+  const confermaECalcola = () => {
+    if (!draft) return;
+    setGiornate(prev => ({ ...prev, [giornataNum]: draft }));
+    setUsers(prev => prev.map(u => {
+      const { total, righe } = calcPuntiUtente(u, draft, players);
+      return { ...u, storico: { ...u.storico, [giornataNum]: { total, righe } } };
+    }));
+    setDraft(null);
+  };
+
+  return (
+    <div className="fc-panel">
+      <div className="fc-panel-head">
+        <h2>Calcolo punteggi</h2>
+        <input className="fc-input fc-input-num" type="number" min="1" value={giornataNum} onChange={e => setGiornataNum(Number(e.target.value) || 1)} />
+        <span className="fc-dim">giornata</span>
+        <button className="fc-btn" onClick={proponiConAI} disabled={loading || coinvolti.length === 0}>
+          <Calculator size={14} /> {loading ? 'Elaboro…' : 'Calcola con AI'}
+        </button>
+      </div>
+      {coinvolti.length === 0 && <p className="fc-note">Schiera almeno una formazione nella tab "Formazioni" prima di calcolare i punteggi.</p>}
+      {error && <div className="fc-error">{error}</div>}
+
+      {draft && (
+        <div className="fc-draft">
+          <h3>Squadre coinvolte — gol subiti</h3>
+          <table className="fc-table">
+            <thead><tr><th>Squadra</th><th>Gol subiti</th><th>Portiere titolare</th></tr></thead>
+            <tbody>
+              {teamsCoinvolti.map(id => (
+                <tr key={id}>
+                  <td>{teamName(teams, id)}</td>
+                  <td><input className="fc-input-cell" type="number" value={draft.teamStats?.[id]?.golSubiti ?? 0} onChange={e => updateTeamStat(id, 'golSubiti', e.target.value)} /></td>
+                  <td>
+                    <select className="fc-select" value={draft.teamStats?.[id]?.portiereTitolareId || ''} onChange={e => updateTeamStat(id, 'portiereTitolareId', e.target.value || null)}>
+                      <option value="">(non specificato)</option>
+                      {players.filter(p => p.team === id && p.ruolo === 'Portiere').map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <h3>Calciatori — eventi di giornata</h3>
+          <table className="fc-table">
+            <thead><tr><th>Calciatore</th><th>Gol</th><th>Assist</th><th>Autogol</th><th>Amm.</th><th>Esp.</th><th>Titolare</th></tr></thead>
+            <tbody>
+              {coinvolti.map(p => {
+                const s = draft.playerStats?.[p.id] || {};
+                return (
+                  <tr key={p.id}>
+                    <td>{p.name} <span className="fc-dim mono">· {teamName(teams, p.team)}</span></td>
+                    <td><input className="fc-input-cell" type="number" value={s.gol ?? 0} onChange={e => updatePlayerStat(p.id, 'gol', Number(e.target.value) || 0)} /></td>
+                    <td><input className="fc-input-cell" type="number" value={s.assist ?? 0} onChange={e => updatePlayerStat(p.id, 'assist', Number(e.target.value) || 0)} /></td>
+                    <td><input className="fc-input-cell" type="number" value={s.autogol ?? 0} onChange={e => updatePlayerStat(p.id, 'autogol', Number(e.target.value) || 0)} /></td>
+                    <td><input type="checkbox" checked={!!s.ammonito} onChange={e => updatePlayerStat(p.id, 'ammonito', e.target.checked)} /></td>
+                    <td><input type="checkbox" checked={!!s.espulso} onChange={e => updatePlayerStat(p.id, 'espulso', e.target.checked)} /></td>
+                    <td><input type="checkbox" checked={s.titolare !== false} onChange={e => updatePlayerStat(p.id, 'titolare', e.target.checked)} /></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <button className="fc-btn primary" onClick={confermaECalcola}><Check size={14} /> Conferma e calcola punteggi</button>
+        </div>
+      )}
+
+      <h3 style={{ marginTop: 28 }}>Classifica fantacalcio</h3>
+      <table className="fc-table">
+        <thead><tr><th>#</th><th>Utente</th><th>Totale</th><th>Ultima giornata</th></tr></thead>
+        <tbody>
+          {classificaFanta.map((u, i) => {
+            const ultima = Object.keys(u.storico || {}).sort((a, b) => b - a)[0];
+            return (
+              <tr key={u.id}>
+                <td className="mono">{i + 1}</td>
+                <td>{u.teamName} <span className="fc-dim">· {u.ownerName}</span></td>
+                <td className="mono">{u.totale}</td>
+                <td className="mono">{ultima ? `G${ultima}: ${u.storico[ultima].total}` : '—'}</td>
+              </tr>
+            );
+          })}
+          {classificaFanta.length === 0 && <tr><td colSpan="4" className="fc-note">Ancora nessun punteggio calcolato.</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/* ============================= TAB: DATI (IMPORT/EXPORT EXCEL) ============================= */
+
+function DatiTab({ players, setPlayers, teams, setTeams, prossimoTurno }) {
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  const esporta = () => {
+    setError(''); setMessage('');
+    try {
+      const wsRose = XLSX.utils.json_to_sheet(players.map(p => ({ Squadra: teamName(teams, p.team), Calciatore: p.name, Ruolo: p.ruolo })));
+      const wsClassifica = XLSX.utils.json_to_sheet(teams.map(t => ({ Squadra: t.name, Punti: t.pts, PG: t.played, GF: t.gf, GS: t.gs })));
+      const wsCalendario = XLSX.utils.json_to_sheet((prossimoTurno.partite || []).map(m => ({
+        Giornata: prossimoTurno.numero || '', Casa: teamName(teams, m.casa), Trasferta: teamName(teams, m.trasferta),
+      })));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, wsRose, 'Rose');
+      XLSX.utils.book_append_sheet(wb, wsClassifica, 'Classifica');
+      XLSX.utils.book_append_sheet(wb, wsCalendario, 'Calendario');
+      const data = new Date().toISOString().slice(0, 10);
+      XLSX.writeFile(wb, `fantacalcio_export_${data}.xlsx`);
+      setMessage('Esportazione completata: fantacalcio_export_' + data + '.xlsx');
+    } catch (e) {
+      setError('Esportazione non riuscita: ' + e.message);
+    }
+  };
+
+  const importa = async (file) => {
+    setError(''); setMessage('');
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array' });
+      const riepilogo = [];
+
+      if (wb.SheetNames.includes('Rose')) {
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets['Rose']);
+        const nuovi = rows.map((r, i) => {
+          const teamId = matchTeamId(teams, r.Squadra);
+          const ruolo = String(r.Ruolo || '').trim();
+          if (!teamId || !ROLES.includes(ruolo) || !r.Calciatore) return null;
+          return { id: `imp-${i}-${Date.now()}`, team: teamId, name: String(r.Calciatore).trim(), ruolo };
+        }).filter(Boolean);
+        if (nuovi.length) { setPlayers(nuovi); riepilogo.push(`Rose: ${nuovi.length} calciatori importati (sostituiscono le rose precedenti).`); }
+        else riepilogo.push('Rose: foglio trovato ma nessuna riga valida.');
+      }
+
+      if (wb.SheetNames.includes('Classifica')) {
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets['Classifica']);
+        let n = 0;
+        setTeams(prev => prev.map(t => {
+          const row = rows.find(r => matchTeamId(teams, r.Squadra) === t.id);
+          if (!row) return t;
+          n++;
+          return {
+            ...t,
+            pts: row.Punti !== undefined ? Number(row.Punti) : t.pts,
+            played: row.PG !== undefined ? Number(row.PG) : t.played,
+            gf: row.GF !== undefined ? Number(row.GF) : t.gf,
+            gs: row.GS !== undefined ? Number(row.GS) : t.gs,
+          };
+        }));
+        riepilogo.push(`Classifica: ${n} squadre aggiornate su ${rows.length} righe.`);
+      }
+
+      if (wb.SheetNames.includes('Calendario')) {
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets['Calendario']);
+        const partite = rows.map(r => {
+          const casaId = matchTeamId(teams, r.Casa);
+          const trasfertaId = matchTeamId(teams, r.Trasferta);
+          return casaId && trasfertaId ? { casa: casaId, trasferta: trasfertaId } : null;
+        }).filter(Boolean);
+        const numero = rows[0]?.Giornata ? Number(rows[0].Giornata) : null;
+        if (partite.length) { prossimoTurno.setManual(numero, partite); riepilogo.push(`Calendario: giornata ${numero || '?'} con ${partite.length} partite importate.`); }
+        else riepilogo.push('Calendario: foglio trovato ma nessuna partita valida.');
+      }
+
+      if (riepilogo.length === 0) throw new Error('Nessun foglio riconosciuto (attesi: Rose, Classifica, Calendario).');
+      setMessage(riepilogo.join(' '));
+    } catch (e) {
+      setError('Importazione non riuscita: ' + e.message);
+    }
+  };
+
+  return (
+    <div className="fc-panel">
+      <div className="fc-panel-head"><h2>Import / Export Excel</h2></div>
+
+      <div className="fc-form-card">
+        <h3 style={{ margin: 0 }}>Esporta</h3>
+        <p className="fc-note">Genera un file .xlsx con tre fogli: Rose, Classifica e Calendario (giornata in arrivo), con i dati attualmente caricati nell'app.</p>
+        <button className="fc-btn primary" onClick={esporta}><Download size={14} /> Esporta Excel</button>
+      </div>
+
+      <div className="fc-form-card">
+        <h3 style={{ margin: 0 }}>Importa</h3>
+        <p className="fc-note">Carica un file .xlsx con lo stesso formato (fogli "Rose", "Classifica", "Calendario" — anche solo alcuni, non serve averli tutti). Le colonne attese sono: Rose → Squadra, Calciatore, Ruolo; Classifica → Squadra, Punti, PG, GF, GS; Calendario → Giornata, Casa, Trasferta.</p>
+        <label className="fc-btn">
+          <Upload size={14} /> Scegli file .xlsx
+          <input type="file" accept=".xlsx,.xls" style={{ display: 'none' }} onChange={e => { if (e.target.files[0]) importa(e.target.files[0]); e.target.value = ''; }} />
+        </label>
+      </div>
+
+      {message && <div className="fc-turnbar">{message}</div>}
+      {error && <div className="fc-error">{error}</div>}
+    </div>
+  );
+}
+
+/* ============================= STILE ============================= */
+
+const CSS = `
+:root {
+  --bg: #0B0D10; --panel: #14171C; --border: #262B33;
+  --gold: #C9A24B; --teal: #2FBFA1; --blue: #6FA8DC; --red: #D9776A;
+  --text: #E8E6E1; --dim: #8B9098; --danger: #E0665C;
+}
+.fc-app { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100%; padding: 0; }
+.mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+.fc-header { display: flex; flex-direction: column; gap: 14px; padding: 20px 18px 14px; border-bottom: 1px solid var(--border); }
+.fc-title { display: flex; align-items: center; gap: 10px; color: var(--gold); }
+.fc-title h1 { font-size: 18px; margin: 0; color: var(--text); }
+.fc-title p { font-size: 12px; margin: 2px 0 0; color: var(--dim); }
+.fc-nav { display: flex; gap: 6px; flex-wrap: wrap; }
+.fc-fixturebar { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; flex-wrap: wrap; }
+.fc-error-inline { color: var(--danger); }
+.fc-next { margin-left: auto; padding: 0 8px; }
+.fc-turnbar { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+.fc-turnlist { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 8px 0 0; padding: 0; }
+.fc-turnlist li { border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; color: var(--dim); font-size: 12px; }
+.fc-turnlist li.current { border-color: var(--teal); color: var(--text); background: rgba(47,191,161,0.12); font-weight: 600; }
+.fc-turnlist li.done { text-decoration: line-through; opacity: 0.6; }
+.fc-admin-inline { display: flex; flex-direction: column; gap: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px; margin-bottom: 10px; }
+.fc-navbtn { display: flex; align-items: center; gap: 6px; background: transparent; border: 1px solid var(--border); color: var(--dim); padding: 7px 12px; border-radius: 7px; font-size: 13px; cursor: pointer; }
+.fc-navbtn.active { color: var(--bg); background: var(--teal); border-color: var(--teal); font-weight: 600; }
+.fc-main { padding: 18px; }
+.fc-panel { display: flex; flex-direction: column; gap: 14px; }
+.fc-panel-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.fc-panel-head h2 { font-size: 16px; margin: 0; margin-right: auto; }
+.fc-btn { display: flex; align-items: center; gap: 6px; background: var(--panel); border: 1px solid var(--border); color: var(--text); padding: 7px 12px; border-radius: 7px; font-size: 13px; cursor: pointer; }
+.fc-btn.primary { background: var(--teal); border-color: var(--teal); color: #05201B; font-weight: 600; }
+.fc-btn:disabled { opacity: 0.5; cursor: default; }
+.fc-icon-btn { background: transparent; border: none; color: var(--dim); cursor: pointer; padding: 4px; }
+.fc-icon-btn:hover { color: var(--text); }
+.fc-select, .fc-input { background: var(--panel); border: 1px solid var(--border); color: var(--text); padding: 7px 9px; border-radius: 7px; font-size: 13px; }
+.fc-input-num { width: 64px; }
+.fc-input-cell { width: 52px; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 4px 6px; border-radius: 5px; font-family: 'IBM Plex Mono', monospace; }
+.fc-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.fc-table th { text-align: left; color: var(--dim); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.fc-table td { padding: 7px 8px; border-bottom: 1px solid var(--border); }
+.fc-table tr.top6 { background: rgba(201,162,75,0.06); }
+.fc-star { color: var(--gold); margin-left: 5px; vertical-align: middle; }
+.fc-note { color: var(--dim); font-size: 12px; margin: 0; }
+.fc-error { background: rgba(224,102,92,0.12); border: 1px solid var(--danger); color: var(--danger); padding: 8px 10px; border-radius: 7px; font-size: 12px; }
+.spin { animation: fc-spin 1s linear infinite; }
+@keyframes fc-spin { to { transform: rotate(360deg); } }
+
+.fc-roster-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; }
+.fc-roster-col h3 { font-size: 12px; text-transform: none; margin: 0 0 8px; letter-spacing: 0.2px; }
+.fc-player-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.fc-number { width: 20px; color: var(--dim); }
+.fc-player-name { flex: 1; }
+.fc-add-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; border-top: 1px solid var(--border); padding-top: 12px; }
+
+.fc-form-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.fc-form-selects { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; }
+.fc-users-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.fc-user-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+.fc-user-card.mine { border-color: var(--teal); box-shadow: 0 0 0 1px var(--teal) inset; }
+.fc-tag-mine { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; background: var(--teal); color: #05201B; padding: 2px 7px; border-radius: 999px; font-weight: 700; height: fit-content; }
+.fc-authtabs { display: flex; gap: 6px; margin-bottom: 4px; }
+.fc-search-row { display: flex; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 4px 10px; }
+.fc-search-input { flex: 1; background: transparent; border: none; padding: 6px 0; }
+.fc-cap-tag { display: inline-flex; align-items: center; gap: 2px; color: var(--gold); font-size: 12px; margin-left: 4px; }
+.fc-user-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.fc-pitch { background: radial-gradient(ellipse at 50% 100%, rgba(47,191,161,0.10), transparent 70%); border: 1px solid var(--border); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 10px; }
+.fc-pitch-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.fc-role-tag { font-family: 'IBM Plex Mono', monospace; font-size: 11px; width: 30px; }
+.fc-dim { color: var(--dim); }
+
+.fc-draft { display: flex; flex-direction: column; gap: 16px; border: 1px solid var(--border); border-radius: 10px; padding: 14px; background: var(--panel); }
+`;
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<FantacalcioApp />);
+
+</script>
+
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js').catch((err) => console.error('SW registration failed:', err));
+    });
+  }
+</script>
+</body>
+</html>
