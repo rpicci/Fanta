@@ -48,6 +48,7 @@
 <div id="root"><p id="root-loading">Caricamento…</p></div>
 
 <script type="text/babel" data-presets="react">
+(function () {
 const { useState, useMemo, useCallback, useEffect } = React;
 
 function makeIcon(glyph) {
@@ -1392,6 +1393,7 @@ const CSS = `
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<FantacalcioApp />);
 
+})();
 </script>
 
 <script>
