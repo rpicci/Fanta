@@ -8,11 +8,11 @@
   // nel caricamento, questo timer è già partito e riesce comunque ad avvisare.
   window.addEventListener('error', function (e) {
     var el = document.getElementById('root-loading');
-    if (el) el.textContent = 'Errore: ' + (e.message || 'risorsa non caricata') + (e.filename ? ' — ' + e.filename.split('/').pop() : (e.target && e.target.src ? ' — ' + e.target.src : ''));
+    if (el) el.textContent = 'Errore: ' + (e.message || 'risorsa non caricata') + (e.filename ? ' \u2014 ' + e.filename.split('/').pop() : (e.target && e.target.src ? ' \u2014 ' + e.target.src : ''));
   }, true);
   setTimeout(function () {
     var el = document.getElementById('root-loading');
-    if (!el) return; // l'app è già partita, l'elemento non esiste più
+    if (!el) return;
     var mancano = [];
     if (!window.React) mancano.push('React');
     if (!window.ReactDOM) mancano.push('ReactDOM');
@@ -20,7 +20,7 @@
     if (!window.XLSX) mancano.push('XLSX');
     el.textContent = mancano.length
       ? 'Impossibile caricare: ' + mancano.join(', ') + '. La richiesta potrebbe essere bloccata o troppo lenta (rete, VPN, risparmio dati, ad-blocker). Prova con unaltra rete o un altro browser.'
-      : 'Le librerie sono caricate ma l\'app non è partita: apri la Console del browser per il dettaglio dell\'errore.';
+      : 'Le librerie sono caricate ma l\'app non \u00e8 partita: apri la Console del browser per il dettaglio dell\'errore.';
   }, 6000);
 </script>
 
@@ -34,10 +34,10 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
-<script src="https://unpkg.com/react@18/umd/react.production.min.js" onerror="document.getElementById('root-loading') && (document.getElementById('root-loading').textContent = 'Impossibile caricare React da unpkg.com — rete bloccata o CDN non raggiungibile.')"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" onerror="document.getElementById('root-loading') && (document.getElementById('root-loading').textContent = 'Impossibile caricare ReactDOM da unpkg.com — rete bloccata o CDN non raggiungibile.')"></script>
-<script src="https://unpkg.com/@babel/standalone@7/babel.min.js" onerror="document.getElementById('root-loading') && (document.getElementById('root-loading').textContent = 'Impossibile caricare Babel da unpkg.com — rete bloccata o CDN non raggiungibile.')"></script>
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" onerror="document.getElementById('root-loading') && (document.getElementById('root-loading').textContent = 'Impossibile caricare XLSX da jsdelivr.net — rete bloccata o CDN non raggiungibile.')"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" onerror="document.getElementById('root-loading') && (document.getElementById('root-loading').textContent = 'Impossibile caricare React da unpkg.com \u2014 rete bloccata o CDN non raggiungibile.')"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" onerror="document.getElementById('root-loading') && (document.getElementById('root-loading').textContent = 'Impossibile caricare ReactDOM da unpkg.com \u2014 rete bloccata o CDN non raggiungibile.')"></script>
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js" onerror="document.getElementById('root-loading') && (document.getElementById('root-loading').textContent = 'Impossibile caricare Babel da unpkg.com \u2014 rete bloccata o CDN non raggiungibile.')"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" onerror="document.getElementById('root-loading') && (document.getElementById('root-loading').textContent = 'Impossibile caricare XLSX da jsdelivr.net \u2014 rete bloccata o CDN non raggiungibile.')"></script>
 
 <style>
   html, body { margin: 0; padding: 0; background: #0B0D10; }
@@ -62,7 +62,6 @@ const Trophy = makeIcon('🏆');
 const Calculator = makeIcon('🧮');
 const Plus = makeIcon('+');
 const X = makeIcon('✕');
-const RefreshCw = makeIcon('⟳');
 const Star = makeIcon('★');
 const Check = makeIcon('✓');
 const Trash2 = makeIcon('🗑️');
@@ -76,6 +75,7 @@ const Upload = makeIcon('⬆️');
 const Database = makeIcon('🗄️');
 const XLSX = window.XLSX;
 
+
 function usePersisted(key, initial) {
   const [state, setState] = useState(() => {
     try {
@@ -88,7 +88,6 @@ function usePersisted(key, initial) {
   }, [key, state]);
   return [state, setState];
 }
-
 
 /* ============================= DATI INIZIALI ============================= */
 /* Dati indicativi (Serie A 2026/27, aggiornati a inizio settembre 2026).
@@ -312,37 +311,13 @@ function matchTeamId(teams, name) {
 }
 
 function useProssimoTurno(teams) {
-  const [state, setState] = useState({ numero: null, partite: [], loading: true, error: '' });
-
-  const fetchTurno = useCallback(async () => {
-    setState(s => ({ ...s, loading: true, error: '' }));
-    try {
-      const prompt = `Cerca online il calendario della Serie A 2026/27 e individua le partite della PROSSIMA giornata di campionato non ancora disputata (o in corso proprio oggi).
-Rispondi con un JSON compatto con tutte le 10 partite, un array [casa,trasferta] per ciascuna:
-{"n":4,"p":[["Roma","Juventus"],["Inter","Milan"]]}`;
-      const data = await callClaude(prompt, { webSearch: true });
-      const righe = data.p || data.partite || [];
-      const partite = righe.map(m => {
-        const casaNome = Array.isArray(m) ? m[0] : m.casa;
-        const trasfertaNome = Array.isArray(m) ? m[1] : m.trasferta;
-        const casaId = matchTeamId(teams, casaNome);
-        const trasfertaId = matchTeamId(teams, trasfertaNome);
-        return casaId && trasfertaId ? { casa: casaId, trasferta: trasfertaId } : null;
-      }).filter(Boolean);
-      const numero = data.n ?? data.giornata ?? null;
-      setState({ numero, partite, loading: false, error: partite.length ? '' : 'Nessuna partita riconosciuta nella risposta.' });
-    } catch (e) {
-      setState({ numero: null, partite: [], loading: false, error: 'Caricamento calendario non riuscito: ' + e.message });
-    }
-  }, [teams]);
-
-  useEffect(() => { fetchTurno(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const [state, setState] = useState({ numero: null, partite: [], loading: false, error: '' });
 
   const setManual = useCallback((numero, partite) => {
     setState({ numero, partite, loading: false, error: '' });
   }, []);
 
-  return { ...state, refresh: fetchTurno, setManual };
+  return { ...state, setManual };
 }
 
 function matchLabel(nextMatchOf, teamId) {
@@ -469,14 +444,11 @@ function FixtureBar({ turno }) {
   return (
     <div className="fc-fixturebar">
       <Calendar size={14} className="fc-dim" />
-      {turno.loading ? (
-        <span className="fc-dim"><RefreshCw size={12} className="spin" style={{ verticalAlign: 'middle', marginRight: 4 }} />Carico il calendario della prossima giornata…</span>
-      ) : turno.error ? (
-        <span className="fc-error-inline">{turno.error}</span>
+      {turno.numero ? (
+        <span>Prossima giornata (G{turno.numero}): {turno.partite.map(p => `${p.casa}-${p.trasferta}`).join(' · ')}</span>
       ) : (
-        <span>Prossima giornata{turno.numero ? ` (G${turno.numero})` : ''}: {turno.partite.map(p => `${p.casa}-${p.trasferta}`).join(' · ')}</span>
+        <span className="fc-dim">Nessun calendario importato — caricalo dalla tab "Dati".</span>
       )}
-      <button className="fc-icon-btn" onClick={turno.refresh} title="Aggiorna calendario"><RefreshCw size={13} className={turno.loading ? 'spin' : ''} /></button>
     </div>
   );
 }
@@ -484,31 +456,7 @@ function FixtureBar({ turno }) {
 /* ============================= TAB: CLASSIFICA ============================= */
 
 function ClassificaTab({ teams, setTeams, standings, top6Ids }) {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
   const [editing, setEditing] = useState(null);
-
-  const aggiornaConAI = useCallback(async () => {
-    setLoading(true); setError('');
-    try {
-      const prompt = `Cerca online la classifica AGGIORNATA e ATTUALE della Serie A italiana di calcio 2026/27 (20 squadre).
-Rispondi con un JSON compatto in questo formato esatto, un array per squadra [nome,punti,partite_giocate,gol_fatti,gol_subiti], per TUTTE le 20 squadre:
-{"t":[["Roma",9,3,10,1],["Inter",9,3,8,2]]}`;
-      const data = await callClaude(prompt, { webSearch: true });
-      const righe = data.t || data.teams || [];
-      setTeams(prev => prev.map(t => {
-        const found = righe.find(r => {
-          const nome = Array.isArray(r) ? r[0] : r.nome;
-          return nome && (nome.toLowerCase().includes(t.name.toLowerCase()) || t.name.toLowerCase().includes(nome.toLowerCase()));
-        });
-        if (!found) return t;
-        const [, punti, pg, gf, gs] = Array.isArray(found) ? found : [found.nome, found.punti, found.partite_giocate, found.gol_fatti, found.gol_subiti];
-        return { ...t, pts: punti ?? t.pts, played: pg ?? t.played, gf: gf ?? t.gf, gs: gs ?? t.gs };
-      }));
-    } catch (e) {
-      setError('Aggiornamento non riuscito: ' + e.message);
-    } finally { setLoading(false); }
-  }, [setTeams]);
 
   const saveEdit = (id, field, value) => {
     setTeams(prev => prev.map(t => t.id === id ? { ...t, [field]: Number(value) || 0 } : t));
@@ -518,11 +466,7 @@ Rispondi con un JSON compatto in questo formato esatto, un array per squadra [no
     <div className="fc-panel">
       <div className="fc-panel-head">
         <h2>Classifica Serie A</h2>
-        <button className="fc-btn" onClick={aggiornaConAI} disabled={loading}>
-          <RefreshCw size={14} className={loading ? 'spin' : ''} /> {loading ? 'Aggiorno…' : 'Aggiorna con AI'}
-        </button>
       </div>
-      {error && <div className="fc-error">{error}</div>}
       <table className="fc-table">
         <thead>
           <tr><th>#</th><th>Squadra</th><th>Pt</th><th>PG</th><th>GF</th><th>GS</th><th></th></tr>
@@ -554,7 +498,7 @@ Rispondi con un JSON compatto in questo formato esatto, un array per squadra [no
         </tbody>
       </table>
       <p className="fc-note">Le squadre con la stella sono attualmente tra le prime 6: solo un giocatore per formazione può appartenere a una di queste.</p>
-      <p className="fc-note">Rose stagione 2026/27 complete per tutte le 20 squadre (fonte pubblica, agg. inizio settembre 2026).</p>
+      <p className="fc-note">Classifica aggiornabile qui riga per riga, oppure importandola dalla tab "Dati".</p>
     </div>
   );
 }
@@ -563,8 +507,6 @@ Rispondi con un JSON compatto in questo formato esatto, un array per squadra [no
 
 function RoseTab({ teams, players, setPlayers, top6Ids, nextMatchOf }) {
   const [selectedTeam, setSelectedTeam] = useState(teams[0]?.id);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
   const [newPlayer, setNewPlayer] = useState({ name: '', ruolo: 'Centrocampista' });
   const [query, setQuery] = useState('');
 
@@ -576,30 +518,6 @@ function RoseTab({ teams, players, setPlayers, top6Ids, nextMatchOf }) {
   const base = q
     ? players.filter(p => p.name.toLowerCase().includes(q) || teamName(teams, p.team).toLowerCase().includes(q))
     : players.filter(p => p.team === selectedTeam);
-
-  const aggiornaRosaConAI = useCallback(async () => {
-    setLoading(true); setError('');
-    try {
-      const nome = teamName(teams, selectedTeam);
-      const prompt = `Cerca online la rosa ATTUALE (stagione 2026/27) della squadra di Serie A "${nome}".
-Includi la rosa il più completa possibile (fino a 30 giocatori), un array [nome,ruolo] per ciascuno, dove ruolo è una lettera: P=Portiere, D=Difensore, C=Centrocampista, A=Attaccante.
-Rispondi con un JSON compatto in questo formato esatto:
-{"g":[["Mario Rossi","P"],["Luca Bianchi","D"]]}`;
-      const data = await callClaude(prompt, { webSearch: true });
-      const RUOLO_LETTERA = { P: 'Portiere', D: 'Difensore', C: 'Centrocampista', A: 'Attaccante' };
-      const righe = data.g || data.giocatori || [];
-      const nuovi = righe.map((g, i) => {
-        const nomeG = Array.isArray(g) ? g[0] : g.nome;
-        const ruoloRaw = Array.isArray(g) ? g[1] : g.ruolo;
-        const ruolo = RUOLO_LETTERA[ruoloRaw] || ruoloRaw;
-        return { id: `${selectedTeam}-ai-${i}-${Date.now()}`, team: selectedTeam, name: nomeG, ruolo };
-      }).filter(g => g.name && ROLES.includes(g.ruolo));
-      if (nuovi.length === 0) throw new Error('nessun giocatore valido nella risposta');
-      setPlayers(prev => [...prev.filter(p => p.team !== selectedTeam), ...nuovi]);
-    } catch (e) {
-      setError('Aggiornamento non riuscito: ' + e.message);
-    } finally { setLoading(false); }
-  }, [selectedTeam, teams, setPlayers]);
 
   const addPlayer = () => {
     if (!newPlayer.name.trim()) return;
@@ -616,9 +534,6 @@ Rispondi con un JSON compatto in questo formato esatto:
         <select className="fc-select" value={selectedTeam} onChange={e => setSelectedTeam(e.target.value)}>
           {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
         </select>
-        <button className="fc-btn" onClick={aggiornaRosaConAI} disabled={loading}>
-          <RefreshCw size={14} className={loading ? 'spin' : ''} /> {loading ? 'Aggiorno…' : 'Aggiorna rosa con AI'}
-        </button>
       </div>
 
       <div className="fc-search-row">
@@ -626,8 +541,6 @@ Rispondi con un JSON compatto in questo formato esatto:
         <input className="fc-input fc-search-input" placeholder="Cerca per squadra o per calciatore…" value={query} onChange={e => setQuery(e.target.value)} />
         {query && <button className="fc-icon-btn" onClick={() => setQuery('')}><X size={14} /></button>}
       </div>
-
-      {error && <div className="fc-error">{error}</div>}
 
       <div className="fc-roster-grid">
         {ROLES.map(ruolo => (
@@ -1214,6 +1127,9 @@ Rispondi SOLO con un oggetto JSON, nessun testo prima o dopo, in questo formato:
 function DatiTab({ players, setPlayers, teams, setTeams, prossimoTurno }) {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [importaRose, setImportaRose] = useState(false);
+  const [importaClassifica, setImportaClassifica] = useState(true);
+  const [importaCalendario, setImportaCalendario] = useState(true);
 
   const esporta = () => {
     setError(''); setMessage('');
@@ -1242,7 +1158,7 @@ function DatiTab({ players, setPlayers, teams, setTeams, prossimoTurno }) {
       const wb = XLSX.read(buf, { type: 'array' });
       const riepilogo = [];
 
-      if (wb.SheetNames.includes('Rose')) {
+      if (importaRose && wb.SheetNames.includes('Rose')) {
         const rows = XLSX.utils.sheet_to_json(wb.Sheets['Rose']);
         const nuovi = rows.map((r, i) => {
           const teamId = matchTeamId(teams, r.Squadra);
@@ -1252,9 +1168,11 @@ function DatiTab({ players, setPlayers, teams, setTeams, prossimoTurno }) {
         }).filter(Boolean);
         if (nuovi.length) { setPlayers(nuovi); riepilogo.push(`Rose: ${nuovi.length} calciatori importati (sostituiscono le rose precedenti).`); }
         else riepilogo.push('Rose: foglio trovato ma nessuna riga valida.');
+      } else if (importaRose) {
+        riepilogo.push('Rose: nessun foglio "Rose" trovato nel file.');
       }
 
-      if (wb.SheetNames.includes('Classifica')) {
+      if (importaClassifica && wb.SheetNames.includes('Classifica')) {
         const rows = XLSX.utils.sheet_to_json(wb.Sheets['Classifica']);
         let n = 0;
         setTeams(prev => prev.map(t => {
@@ -1270,9 +1188,11 @@ function DatiTab({ players, setPlayers, teams, setTeams, prossimoTurno }) {
           };
         }));
         riepilogo.push(`Classifica: ${n} squadre aggiornate su ${rows.length} righe.`);
+      } else if (importaClassifica) {
+        riepilogo.push('Classifica: nessun foglio "Classifica" trovato nel file.');
       }
 
-      if (wb.SheetNames.includes('Calendario')) {
+      if (importaCalendario && wb.SheetNames.includes('Calendario')) {
         const rows = XLSX.utils.sheet_to_json(wb.Sheets['Calendario']);
         const partite = rows.map(r => {
           const casaId = matchTeamId(teams, r.Casa);
@@ -1282,9 +1202,11 @@ function DatiTab({ players, setPlayers, teams, setTeams, prossimoTurno }) {
         const numero = rows[0]?.Giornata ? Number(rows[0].Giornata) : null;
         if (partite.length) { prossimoTurno.setManual(numero, partite); riepilogo.push(`Calendario: giornata ${numero || '?'} con ${partite.length} partite importate.`); }
         else riepilogo.push('Calendario: foglio trovato ma nessuna partita valida.');
+      } else if (importaCalendario) {
+        riepilogo.push('Calendario: nessun foglio "Calendario" trovato nel file.');
       }
 
-      if (riepilogo.length === 0) throw new Error('Nessun foglio riconosciuto (attesi: Rose, Classifica, Calendario).');
+      if (riepilogo.length === 0) throw new Error('Nessuna sezione selezionata per l\'importazione.');
       setMessage(riepilogo.join(' '));
     } catch (e) {
       setError('Importazione non riuscita: ' + e.message);
@@ -1304,6 +1226,11 @@ function DatiTab({ players, setPlayers, teams, setTeams, prossimoTurno }) {
       <div className="fc-form-card">
         <h3 style={{ margin: 0 }}>Importa</h3>
         <p className="fc-note">Carica un file .xlsx con lo stesso formato (fogli "Rose", "Classifica", "Calendario" — anche solo alcuni, non serve averli tutti). Le colonne attese sono: Rose → Squadra, Calciatore, Ruolo; Classifica → Squadra, Punti, PG, GF, GS; Calendario → Giornata, Casa, Trasferta.</p>
+        <div className="fc-checkbox-row">
+          <label><input type="checkbox" checked={importaRose} onChange={e => setImportaRose(e.target.checked)} /> Rose</label>
+          <label><input type="checkbox" checked={importaClassifica} onChange={e => setImportaClassifica(e.target.checked)} /> Classifica</label>
+          <label><input type="checkbox" checked={importaCalendario} onChange={e => setImportaCalendario(e.target.checked)} /> Prossimo turno</label>
+        </div>
         <label className="fc-btn">
           <Upload size={14} /> Scegli file .xlsx
           <input type="file" accept=".xlsx,.xls" style={{ display: 'none' }} onChange={e => { if (e.target.files[0]) importa(e.target.files[0]); e.target.value = ''; }} />
@@ -1379,6 +1306,8 @@ const CSS = `
 .fc-tag-mine { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; background: var(--teal); color: #05201B; padding: 2px 7px; border-radius: 999px; font-weight: 700; height: fit-content; }
 .fc-authtabs { display: flex; gap: 6px; margin-bottom: 4px; }
 .fc-search-row { display: flex; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 4px 10px; }
+.fc-checkbox-row { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; }
+.fc-checkbox-row label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .fc-search-input { flex: 1; background: transparent; border: none; padding: 6px 0; }
 .fc-cap-tag { display: inline-flex; align-items: center; gap: 2px; color: var(--gold); font-size: 12px; margin-left: 4px; }
 .fc-user-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
@@ -1390,10 +1319,12 @@ const CSS = `
 .fc-draft { display: flex; flex-direction: column; gap: 16px; border: 1px solid var(--border); border-radius: 10px; padding: 14px; background: var(--panel); }
 `;
 
+
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<FantacalcioApp />);
 
 })();
+
 </script>
 
 <script>
