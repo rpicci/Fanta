@@ -2,6 +2,28 @@
 <html lang="it">
 <head>
 <meta charset="UTF-8">
+
+<script>
+  // Deve essere il primissimo script eseguito: se una risorsa più sotto si blocca
+  // nel caricamento, questo timer è già partito e riesce comunque ad avvisare.
+  window.addEventListener('error', function (e) {
+    var el = document.getElementById('root-loading');
+    if (el) el.textContent = 'Errore: ' + (e.message || 'risorsa non caricata') + (e.filename ? ' — ' + e.filename.split('/').pop() : (e.target && e.target.src ? ' — ' + e.target.src : ''));
+  }, true);
+  setTimeout(function () {
+    var el = document.getElementById('root-loading');
+    if (!el) return; // l'app è già partita, l'elemento non esiste più
+    var mancano = [];
+    if (!window.React) mancano.push('React');
+    if (!window.ReactDOM) mancano.push('ReactDOM');
+    if (!window.Babel) mancano.push('Babel');
+    if (!window.XLSX) mancano.push('XLSX');
+    el.textContent = mancano.length
+      ? 'Impossibile caricare: ' + mancano.join(', ') + '. La richiesta potrebbe essere bloccata o troppo lenta (rete, VPN, risparmio dati, ad-blocker). Prova con unaltra rete o un altro browser.'
+      : 'Le librerie sono caricate ma l\'app non è partita: apri la Console del browser per il dettaglio dell\'errore.';
+  }, 6000);
+</script>
+
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Fantacalcio Semplificato</title>
 <meta name="theme-color" content="#0B0D10">
@@ -12,33 +34,15 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
-<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" onerror="document.getElementById('root-loading') && (document.getElementById('root-loading').textContent = 'Impossibile caricare React da unpkg.com — rete bloccata o CDN non raggiungibile.')"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" onerror="document.getElementById('root-loading') && (document.getElementById('root-loading').textContent = 'Impossibile caricare ReactDOM da unpkg.com — rete bloccata o CDN non raggiungibile.')"></script>
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js" onerror="document.getElementById('root-loading') && (document.getElementById('root-loading').textContent = 'Impossibile caricare Babel da unpkg.com — rete bloccata o CDN non raggiungibile.')"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" onerror="document.getElementById('root-loading') && (document.getElementById('root-loading').textContent = 'Impossibile caricare XLSX da jsdelivr.net — rete bloccata o CDN non raggiungibile.')"></script>
 
 <style>
   html, body { margin: 0; padding: 0; background: #0B0D10; }
   #root-loading { color: #8B9098; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; padding: 24px; text-align: center; }
 </style>
-<script>
-  window.addEventListener('error', function (e) {
-    var el = document.getElementById('root-loading');
-    if (el) el.textContent = 'Errore: ' + (e.message || 'sconosciuto') + (e.filename ? ' — ' + e.filename.split('/').pop() : '');
-  });
-  setTimeout(function () {
-    var el = document.getElementById('root-loading');
-    if (!el) return; // l'app è già partita, l'elemento non esiste più
-    var mancano = [];
-    if (!window.React) mancano.push('React');
-    if (!window.ReactDOM) mancano.push('ReactDOM');
-    if (!window.Babel) mancano.push('Babel');
-    if (!window.XLSX) mancano.push('XLSX');
-    el.textContent = mancano.length
-      ? 'Impossibile caricare: ' + mancano.join(', ') + '. Controlla la connessione internet e apri la pagina da un indirizzo https:// reale (non da file locale).'
-      : 'Le librerie sono caricate ma l\'app non è partita: apri la Console del browser per il dettaglio dell\'errore.';
-  }, 7000);
-</script>
 </head>
 <body>
 <div id="root"><p id="root-loading">Caricamento…</p></div>
