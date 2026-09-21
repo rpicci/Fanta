@@ -239,66 +239,92 @@ function computeStandings(teams) {
 
 function teamName(teams, id) { return teams.find(t => t.id === id)?.name || id; }
 
-async function callClaude(prompt, { webSearch = true } = {}) {
-  const fullPrompt = prompt + '\n\nRispondi SOLO con il JSON richiesto, compatto (senza spazi/a-capo superflui), senza markdown, senza alcun testo prima o dopo, e senza descrivere la ricerca svolta.';
-  const res = await fetch('/.netlify/functions/ai', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt: fullPrompt, webSearch }),
-  });
-  const data = await res.json();
-  if (data.error) throw new Error('Errore API: ' + (data.error.message || JSON.stringify(data.error)));
-  const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
-  if (!text.trim()) throw new Error('Risposta AI vuota: nessun blocco di testo restituito (possibile solo ricerca senza risposta finale, riprova).');
-  const cleaned = text.replace(/```json|```/g, '').trim();
-  const iObj = cleaned.indexOf('{');
-  const iArr = cleaned.indexOf('[');
-  let open, close, start;
-  if (iObj === -1 && iArr === -1) throw new Error('Nessun JSON trovato nella risposta AI:\n' + text.slice(0, 300));
-  if (iObj === -1 || (iArr !== -1 && iArr < iObj)) { open = '['; close = ']'; start = iArr; }
-  else { open = '{'; close = '}'; start = iObj; }
-  const end = cleaned.lastIndexOf(close);
-  if (end === -1 || end < start) throw new Error('La risposta AI sembra incompleta/troncata (JSON senza chiusura). Riprova: se persiste, la richiesta va probabilmente ridotta.\n' + cleaned.slice(0, 300));
-  const jsonStr = cleaned.slice(start, end + 1);
-  try {
-    return JSON.parse(jsonStr);
-  } catch (e) {
-    throw new Error('JSON ricevuto ma non valido, probabilmente troncato (' + e.message + '). Riprova.');
-  }
+const COLONNE_PUNTEGGI = ['Giornata', 'Squadra', 'Calciatore', 'Ruolo', 'Ha giocato', 'Gol fatti', 'Assist', 'Autogol', 'Rigori parati', 'Gol subiti squadra', 'Porta inviolata', 'Punteggio', 'Rigori sbagliati', 'Ammonizioni', 'Espulsioni'];
+
+function trovaRigaGiocatore(rows, teams, teamId, nomeCalciatore) {
+  const candidate = rows.filter(r => matchTeamId(teams, r.Squadra) === teamId);
+  const nc = String(nomeCalciatore || '').toLowerCase();
+  let match = candidate.find(r => String(r.Calciatore || '').toLowerCase() === nc);
+  if (!match) match = candidate.find(r => String(r.Calciatore || '').toLowerCase().includes(nc) || nc.includes(String(r.Calciatore || '').toLowerCase()));
+  if (!match) match = candidate.find(r => cognome(String(r.Calciatore || '')).toLowerCase() === cognome(nomeCalciatore).toLowerCase());
+  return match || null;
 }
 
-function calcPuntiUtente(user, giornataData, players) {
-  const righe = [];
-  let total = 0;
-  Object.entries(user.selezione).forEach(([ruolo, playerId]) => {
-    const player = players.find(p => p.id === playerId);
-    if (!player) return;
-    let effectiveId = playerId;
-    let sostituito = false;
-    if (ruolo === 'Portiere') {
-      const stat = giornataData.playerStats?.[playerId];
-      const teamStat = giornataData.teamStats?.[player.team];
-      if (stat && stat.titolare === false && teamStat?.portiereTitolareId) {
-        effectiveId = teamStat.portiereTitolareId;
-        sostituito = true;
+function calcolaPunteggioRiga(row, ruolo) {
+  const gol = Number(row['Gol fatti']) || 0;
+  const assist = Number(row['Assist']) || 0;
+  const autogol = Number(row['Autogol']) || 0;
+  const rigoriParati = Number(row['Rigori parati']) || 0;
+  const golSubiti = Number(row['Gol subiti squadra']) || 0;
+  const portaInviolata = String(row['Porta inviolata'] || '').trim().toLowerCase() === 'si';
+  const rigoriSbagliati = Number(row['Rigori sbagliati']) || 0;
+  const ammonizioni = Number(row['Ammonizioni']) || 0;
+  const espulsioni = Number(row['Espulsioni']) || 0;
+  const haGiocato = String(row['Ha giocato'] || '').trim().toLowerCase() === 'si';
+
+  let punti = 0;
+  const dettagli = [];
+  if (gol) { punti += gol * 3; dettagli.push(`gol +${gol * 3}`); }
+  if (assist) { punti += assist * 1; dettagli.push(`assist +${assist}`); }
+  if (rigoriParati) { punti += rigoriParati * 3; dettagli.push(`rigori parati +${rigoriParati * 3}`); }
+  if (ruolo === 'Portiere' || ruolo === 'Difensore') {
+    if (portaInviolata) { punti += 1; dettagli.push('porta inviolata +1'); }
+    if (golSubiti) { punti -= golSubiti; dettagli.push(`gol subiti -${golSubiti}`); }
+  }
+  if (autogol) { punti -= autogol * 2; dettagli.push(`autogol -${autogol * 2}`); }
+  if (rigoriSbagliati) { punti -= rigoriSbagliati * 3; dettagli.push(`rigori sbagliati -${rigoriSbagliati * 3}`); }
+  if (ammonizioni) { punti -= ammonizioni * 0.5; dettagli.push(`ammonizioni -${ammonizioni * 0.5}`); }
+  if (espulsioni) { punti -= espulsioni; dettagli.push(`espulsioni -${espulsioni}`); }
+
+  const raw = {
+    haGiocato: haGiocato ? 'si' : 'no', golFatti: gol, assist, autogol, rigoriParati,
+    golSubiti, portaInviolata: portaInviolata ? 'si' : 'no', rigoriSbagliati, ammonizioni, espulsioni,
+  };
+  return { punti: Math.round(punti * 100) / 100, dettagli, raw };
+}
+
+function importaPunteggiSheet(rows, { users, players, teams }) {
+  if (!rows.length) return { ok: false, msg: 'Foglio "Punteggi" vuoto.' };
+  const giornataNum = Number(rows[0].Giornata) || null;
+  if (!giornataNum) return { ok: false, msg: 'Impossibile determinare il numero di giornata dalla colonna A.' };
+  const righeGiornata = rows.filter(r => !r.Giornata || Number(r.Giornata) === giornataNum);
+
+  const discrepanze = [];
+  const nuovoStorico = {};
+
+  users.forEach(u => {
+    let total = 0;
+    const righe = [];
+    ROLES.forEach(ruolo => {
+      const pid = u.selezione?.[ruolo];
+      const player = players.find(p => p.id === pid);
+      if (!player) return;
+
+      let riga = trovaRigaGiocatore(righeGiornata, teams, player.team, player.name);
+      let sostituito = false;
+      let nomeSostituto = null;
+      if (ruolo === 'Portiere' && riga && String(riga['Ha giocato'] || '').trim().toLowerCase() !== 'si') {
+        const titolare = righeGiornata.find(r => matchTeamId(teams, r.Squadra) === player.team && String(r.Ruolo || '').trim() === 'Portiere' && String(r['Ha giocato'] || '').trim().toLowerCase() === 'si');
+        if (titolare) { riga = titolare; sostituito = true; nomeSostituto = titolare.Calciatore; }
       }
-    }
-    const stat = giornataData.playerStats?.[effectiveId] || {};
-    const teamStat = giornataData.teamStats?.[player.team] || {};
-    let punti = 0;
-    if (ruolo === 'Portiere' || ruolo === 'Difensore') {
-      const golSubiti = teamStat.golSubiti ?? 0;
-      punti += golSubiti === 0 ? 1 : -golSubiti;
-    }
-    punti += (stat.gol || 0) * 3;
-    punti += (stat.assist || 0) * 1;
-    punti += (stat.autogol || 0) * -2;
-    if (stat.ammonito) punti -= 0.5;
-    if (stat.espulso) punti -= 1;
-    righe.push({ ruolo, player, punti, sostituito, effectiveId, stat, golSubiti: teamStat.golSubiti ?? 0 });
-    total += punti;
+
+      if (!riga) {
+        righe.push({ ruolo, player, punti: 0, dettagli: ['dato mancante nel foglio Punteggi'], sostituito: false, mancante: true });
+        return;
+      }
+
+      const { punti, dettagli, raw } = calcolaPunteggioRiga(riga, ruolo);
+      const dichiarato = riga.Punteggio !== undefined && riga.Punteggio !== '' ? Number(riga.Punteggio) : null;
+      if (dichiarato !== null && Math.abs(dichiarato - punti) > 0.01) {
+        discrepanze.push(`${player.name} (${teamName(teams, player.team)}): foglio=${dichiarato}, calcolato=${punti}`);
+      }
+      righe.push({ ruolo, player, punti, dettagli, sostituito, nomeSostituto, ...raw });
+      total += punti;
+    });
+    nuovoStorico[u.id] = { total: Math.round(total * 100) / 100, righe };
   });
-  return { total: Math.round(total * 100) / 100, righe };
+
+  return { ok: true, giornataNum, nuovoStorico, discrepanze };
 }
 
 function matchTeamId(teams, name) {
@@ -351,7 +377,6 @@ function FantacalcioApp() {
   const [teams, setTeams] = usePersisted('fc_teams_v1', INITIAL_TEAMS);
   const [players, setPlayers] = usePersisted('fc_players_v1', INITIAL_PLAYERS);
   const [users, setUsers] = usePersisted('fc_users_v1', []);
-  const [giornate, setGiornate] = usePersisted('fc_giornate_v1', {});
   const [tab, setTab] = useState('classifica');
   const [torneo, setTorneo] = usePersisted('fc_torneo_v1', { nome: '', creato: false });
 
@@ -366,7 +391,6 @@ function FantacalcioApp() {
   const eliminaTorneo = useCallback(() => {
     setTorneo({ nome: '', creato: false });
     setUsers([]);
-    setGiornate({});
     setCurrentUserId(null);
     setIsAdmin(false);
     setTurnIndex(0);
@@ -407,10 +431,11 @@ function FantacalcioApp() {
           </div>
         </div>
         <nav className="fc-nav">
-          <NavBtn active={tab === 'classifica'} onClick={() => setTab('classifica')} icon={<Trophy size={16} />} label="Classifica" />
+          <NavBtn active={tab === 'classifica'} onClick={() => setTab('classifica')} icon={<Trophy size={16} />} label="Serie A" />
           <NavBtn active={tab === 'rose'} onClick={() => setTab('rose')} icon={<Users size={16} />} label="Rose" />
           <NavBtn active={tab === 'formazioni'} onClick={() => setTab('formazioni')} icon={<Shield size={16} />} label="Formazioni" />
           <NavBtn active={tab === 'punteggi'} onClick={() => setTab('punteggi')} icon={<Calculator size={16} />} label="Punteggi" />
+          <NavBtn active={tab === 'classificaFanta'} onClick={() => setTab('classificaFanta')} icon={<Trophy size={16} />} label="Classifica" />
           <NavBtn active={tab === 'dati'} onClick={() => setTab('dati')} icon={<Database size={16} />} label="Dati" />
         </nav>
         <FixtureBar turno={prossimoTurno} />
@@ -430,16 +455,12 @@ function FantacalcioApp() {
             turnSeed={turnSeed}
           />
         )}
-        {tab === 'punteggi' && (
-          <PunteggiTab
-            players={players} users={users} setUsers={setUsers} teams={teams}
-            giornate={giornate} setGiornate={setGiornate} classificaFanta={classificaFanta}
-          />
-        )}
+        {tab === 'punteggi' && <PunteggiTab players={players} users={users} />}
+        {tab === 'classificaFanta' && <ClassificaFantaTab classificaFanta={classificaFanta} />}
         {tab === 'dati' && (
           <DatiTab
             players={players} setPlayers={setPlayers} teams={teams} setTeams={setTeams}
-            prossimoTurno={prossimoTurno}
+            prossimoTurno={prossimoTurno} users={users} setUsers={setUsers}
           />
         )}
       </main>
@@ -1035,120 +1056,72 @@ function PitchView({ players, teams, selezione, capitanoRuolo, nextMatchOf }) {
 
 /* ============================= TAB: PUNTEGGI ============================= */
 
-function PunteggiTab({ players, users, setUsers, teams, giornate, setGiornate, classificaFanta }) {
-  const [giornataNum, setGiornataNum] = useState(1);
-  const [draft, setDraft] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+function PunteggiTab({ players, users }) {
+  const giornateDisponibili = useMemo(() => {
+    const set = new Set();
+    users.forEach(u => Object.keys(u.storico || {}).forEach(g => set.add(Number(g))));
+    return [...set].sort((a, b) => b - a);
+  }, [users]);
 
-  const coinvolti = useMemo(() => {
-    const ids = new Set();
-    users.forEach(u => Object.values(u.selezione).forEach(id => id && ids.add(id)));
-    return players.filter(p => ids.has(p.id));
-  }, [users, players]);
-  const teamsCoinvolti = useMemo(() => [...new Set(coinvolti.map(p => p.team))], [coinvolti]);
-
-  const proponiConAI = useCallback(async () => {
-    setLoading(true); setError('');
-    try {
-      const elenco = coinvolti.map(p => `${p.id}: ${p.name} (${teamName(teams, p.team)}, ${p.ruolo})`).join('\n');
-      const squadre = teamsCoinvolti.map(id => `${id}: ${teamName(teams, id)}`).join('\n');
-      const prompt = `Cerca online i risultati REALI della giornata ${giornataNum} del campionato di Serie A 2026/27.
-Per le seguenti squadre, indica quanti gol hanno SUBITO in quella giornata e chi era il portiere titolare:
-${squadre}
-
-Per i seguenti calciatori, indica gol fatti, assist, autogol, se ammonito, se espulso, se ha giocato da titolare:
-${elenco}
-
-Rispondi SOLO con un oggetto JSON, nessun testo prima o dopo, in questo formato:
-{"teamStats":{"CODICE_SQUADRA":{"golSubiti":0,"portiereTitolareId":"id_giocatore_titolare_se_presente_in_elenco_altrimenti_null"}},
-"playerStats":{"id_giocatore":{"gol":0,"assist":0,"autogol":0,"ammonito":false,"espulso":false,"titolare":true}}}`;
-      const data = await callClaude(prompt, { webSearch: true });
-      setDraft(data);
-    } catch (e) {
-      setError('Proposta AI non riuscita: ' + e.message + '. Puoi comunque compilare i dati manualmente qui sotto.');
-      setDraft({ teamStats: Object.fromEntries(teamsCoinvolti.map(id => [id, { golSubiti: 0, portiereTitolareId: null }])), playerStats: Object.fromEntries(coinvolti.map(p => [p.id, { gol: 0, assist: 0, autogol: 0, ammonito: false, espulso: false, titolare: true }])) });
-    } finally { setLoading(false); }
-  }, [coinvolti, teamsCoinvolti, teams, giornataNum]);
-
-  const updateTeamStat = (teamId, field, value) => {
-    setDraft(d => ({ ...d, teamStats: { ...d.teamStats, [teamId]: { ...d.teamStats[teamId], [field]: field === 'golSubiti' ? Number(value) || 0 : value } } }));
-  };
-  const updatePlayerStat = (pid, field, value) => {
-    setDraft(d => ({ ...d, playerStats: { ...d.playerStats, [pid]: { ...d.playerStats[pid], [field]: value } } }));
-  };
-
-  const confermaECalcola = () => {
-    if (!draft) return;
-    setGiornate(prev => ({ ...prev, [giornataNum]: draft }));
-    setUsers(prev => prev.map(u => {
-      const { total, righe } = calcPuntiUtente(u, draft, players);
-      return { ...u, storico: { ...u.storico, [giornataNum]: { total, righe } } };
-    }));
-    setDraft(null);
-  };
+  const [giornataVista, setGiornataVista] = useState(null);
+  useEffect(() => {
+    if (giornateDisponibili.length && !giornateDisponibili.includes(giornataVista)) setGiornataVista(giornateDisponibili[0]);
+  }, [giornateDisponibili]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="fc-panel">
       <div className="fc-panel-head">
-        <h2>Calcolo punteggi</h2>
-        <input className="fc-input fc-input-num" type="number" min="1" value={giornataNum} onChange={e => setGiornataNum(Number(e.target.value) || 1)} />
-        <span className="fc-dim">giornata</span>
-        <button className="fc-btn" onClick={proponiConAI} disabled={loading || coinvolti.length === 0}>
-          <Calculator size={14} /> {loading ? 'Elaboro…' : 'Calcola con AI'}
-        </button>
+        <h2>Punteggi</h2>
+        {giornateDisponibili.length > 0 && (
+          <select className="fc-select" value={giornataVista || ''} onChange={e => setGiornataVista(Number(e.target.value))}>
+            {giornateDisponibili.map(g => <option key={g} value={g}>Giornata {g}</option>)}
+          </select>
+        )}
       </div>
-      {coinvolti.length === 0 && <p className="fc-note">Schiera almeno una formazione nella tab "Formazioni" prima di calcolare i punteggi.</p>}
-      {error && <div className="fc-error">{error}</div>}
 
-      {draft && (
-        <div className="fc-draft">
-          <h3>Squadre coinvolte — gol subiti</h3>
-          <table className="fc-table">
-            <thead><tr><th>Squadra</th><th>Gol subiti</th><th>Portiere titolare</th></tr></thead>
-            <tbody>
-              {teamsCoinvolti.map(id => (
-                <tr key={id}>
-                  <td>{teamName(teams, id)}</td>
-                  <td><input className="fc-input-cell" type="number" value={draft.teamStats?.[id]?.golSubiti ?? 0} onChange={e => updateTeamStat(id, 'golSubiti', e.target.value)} /></td>
-                  <td>
-                    <select className="fc-select" value={draft.teamStats?.[id]?.portiereTitolareId || ''} onChange={e => updateTeamStat(id, 'portiereTitolareId', e.target.value || null)}>
-                      <option value="">(non specificato)</option>
-                      {players.filter(p => p.team === id && p.ruolo === 'Portiere').map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                    </select>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          <h3>Calciatori — eventi di giornata</h3>
-          <table className="fc-table">
-            <thead><tr><th>Calciatore</th><th>Gol</th><th>Assist</th><th>Autogol</th><th>Amm.</th><th>Esp.</th><th>Titolare</th></tr></thead>
-            <tbody>
-              {coinvolti.map(p => {
-                const s = draft.playerStats?.[p.id] || {};
-                return (
-                  <tr key={p.id}>
-                    <td>{p.name} <span className="fc-dim mono">· {teamName(teams, p.team)}</span></td>
-                    <td><input className="fc-input-cell" type="number" value={s.gol ?? 0} onChange={e => updatePlayerStat(p.id, 'gol', Number(e.target.value) || 0)} /></td>
-                    <td><input className="fc-input-cell" type="number" value={s.assist ?? 0} onChange={e => updatePlayerStat(p.id, 'assist', Number(e.target.value) || 0)} /></td>
-                    <td><input className="fc-input-cell" type="number" value={s.autogol ?? 0} onChange={e => updatePlayerStat(p.id, 'autogol', Number(e.target.value) || 0)} /></td>
-                    <td><input type="checkbox" checked={!!s.ammonito} onChange={e => updatePlayerStat(p.id, 'ammonito', e.target.checked)} /></td>
-                    <td><input type="checkbox" checked={!!s.espulso} onChange={e => updatePlayerStat(p.id, 'espulso', e.target.checked)} /></td>
-                    <td><input type="checkbox" checked={s.titolare !== false} onChange={e => updatePlayerStat(p.id, 'titolare', e.target.checked)} /></td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          <button className="fc-btn primary" onClick={confermaECalcola}><Check size={14} /> Conferma e calcola punteggi</button>
+      {giornateDisponibili.length === 0 ? (
+        <p className="fc-note">Nessun punteggio ancora importato. Vai su "Dati" e importa il foglio "Punteggi" dal file Excel.</p>
+      ) : (
+        <div className="fc-users-grid">
+          {users.map(u => {
+            const dati = u.storico?.[giornataVista];
+            return (
+              <div key={u.id} className="fc-user-card">
+                <div className="fc-user-head">
+                  <strong>{u.teamName}</strong>
+                  {dati && <span className="mono">{dati.total > 0 ? '+' : ''}{dati.total} pt</span>}
+                </div>
+                {dati ? (
+                  <div className="fc-score-list">
+                    {dati.righe.map(r => (
+                      <div key={r.ruolo} className="fc-score-row">
+                        <div className="fc-score-main">
+                          <span className="fc-role-tag" style={{ color: ROLE_COLOR[r.ruolo] }}>{ROLE_SHORT[r.ruolo]}</span>
+                          <span className="fc-score-name">{r.player.name}{r.sostituito && <span className="fc-dim"> (sost. da {r.nomeSostituto})</span>}</span>
+                          <span className="mono fc-score-pt">{r.mancante ? '—' : `${r.punti > 0 ? '+' : ''}${r.punti}`}</span>
+                        </div>
+                        {r.dettagli?.length > 0 && <div className="fc-score-detail fc-dim">{r.dettagli.join(' · ')}</div>}
+                      </div>
+                    ))}
+                  </div>
+                ) : <p className="fc-note">Nessuna formazione per questa giornata.</p>}
+              </div>
+            );
+          })}
         </div>
       )}
+    </div>
+  );
+}
 
-      <h3 style={{ marginTop: 28 }}>Classifica fantacalcio</h3>
+/* ============================= TAB: CLASSIFICA FANTACALCIO ============================= */
+
+function ClassificaFantaTab({ classificaFanta }) {
+  return (
+    <div className="fc-panel">
+      <div className="fc-panel-head"><h2>Classifica Fantacalcio</h2></div>
       <table className="fc-table">
-        <thead><tr><th>#</th><th>Utente</th><th>Totale</th><th>Ultima giornata</th></tr></thead>
+        <thead><tr><th>#</th><th>Squadra</th><th>Totale</th><th>Ultima giornata</th></tr></thead>
         <tbody>
           {classificaFanta.map((u, i) => {
             const ultima = Object.keys(u.storico || {}).sort((a, b) => b - a)[0];
@@ -1170,12 +1143,13 @@ Rispondi SOLO con un oggetto JSON, nessun testo prima o dopo, in questo formato:
 
 /* ============================= TAB: DATI (IMPORT/EXPORT EXCEL) ============================= */
 
-function DatiTab({ players, setPlayers, teams, setTeams, prossimoTurno }) {
+function DatiTab({ players, setPlayers, teams, setTeams, prossimoTurno, users, setUsers }) {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [importaRose, setImportaRose] = useState(false);
   const [importaClassifica, setImportaClassifica] = useState(true);
   const [importaCalendario, setImportaCalendario] = useState(true);
+  const [importaPunteggi, setImportaPunteggi] = useState(true);
 
   const esporta = () => {
     setError(''); setMessage('');
@@ -1185,10 +1159,28 @@ function DatiTab({ players, setPlayers, teams, setTeams, prossimoTurno }) {
       const wsCalendario = XLSX.utils.json_to_sheet((prossimoTurno.partite || []).map(m => ({
         Giornata: prossimoTurno.numero || '', Casa: teamName(teams, m.casa), Trasferta: teamName(teams, m.trasferta),
       })));
+      const righeP = [];
+      users.forEach(u => {
+        Object.entries(u.storico || {}).forEach(([g, dati]) => {
+          (dati.righe || []).forEach(r => {
+            if (r.mancante) return;
+            righeP.push({
+              Giornata: Number(g), Squadra: teamName(teams, r.player.team), Calciatore: r.player.name, Ruolo: r.ruolo,
+              'Ha giocato': r.haGiocato ?? (r.sostituito ? 'no' : 'si'),
+              'Gol fatti': r.golFatti || 0, 'Assist': r.assist || 0, 'Autogol': r.autogol || 0,
+              'Rigori parati': r.rigoriParati || 0, 'Gol subiti squadra': r.golSubiti || 0,
+              'Porta inviolata': r.portaInviolata || 'no', 'Punteggio': r.punti,
+              'Rigori sbagliati': r.rigoriSbagliati || 0, 'Ammonizioni': r.ammonizioni || 0, 'Espulsioni': r.espulsioni || 0,
+            });
+          });
+        });
+      });
+      const wsPunteggi = XLSX.utils.json_to_sheet(righeP, { header: COLONNE_PUNTEGGI });
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, wsRose, 'Rose');
       XLSX.utils.book_append_sheet(wb, wsClassifica, 'Classifica');
       XLSX.utils.book_append_sheet(wb, wsCalendario, 'Calendario');
+      XLSX.utils.book_append_sheet(wb, wsPunteggi, 'Punteggi');
       const data = new Date().toISOString().slice(0, 10);
       XLSX.writeFile(wb, `fantacalcio_export_${data}.xlsx`);
       setMessage('Esportazione completata: fantacalcio_export_' + data + '.xlsx');
@@ -1252,6 +1244,24 @@ function DatiTab({ players, setPlayers, teams, setTeams, prossimoTurno }) {
         riepilogo.push('Calendario: nessun foglio "Calendario" trovato nel file.');
       }
 
+      if (importaPunteggi && wb.SheetNames.includes('Punteggi')) {
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets['Punteggi']);
+        const risultato = importaPunteggiSheet(rows, { users, players, teams });
+        if (!risultato.ok) {
+          riepilogo.push('Punteggi: ' + risultato.msg);
+        } else {
+          setUsers(prev => prev.map(u => risultato.nuovoStorico[u.id]
+            ? { ...u, storico: { ...u.storico, [risultato.giornataNum]: risultato.nuovoStorico[u.id] } }
+            : u));
+          riepilogo.push(`Punteggi: giornata ${risultato.giornataNum} calcolata per ${Object.keys(risultato.nuovoStorico).length} squadre.`);
+          if (risultato.discrepanze.length) {
+            riepilogo.push(`Attenzione, punteggio in colonna L diverso da quello calcolato per: ${risultato.discrepanze.join('; ')}.`);
+          }
+        }
+      } else if (importaPunteggi) {
+        riepilogo.push('Punteggi: nessun foglio "Punteggi" trovato nel file.');
+      }
+
       if (riepilogo.length === 0) throw new Error('Nessuna sezione selezionata per l\'importazione.');
       setMessage(riepilogo.join(' '));
     } catch (e) {
@@ -1265,17 +1275,20 @@ function DatiTab({ players, setPlayers, teams, setTeams, prossimoTurno }) {
 
       <div className="fc-form-card">
         <h3 style={{ margin: 0 }}>Esporta</h3>
-        <p className="fc-note">Genera un file .xlsx con tre fogli: Rose, Classifica e Calendario (giornata in arrivo), con i dati attualmente caricati nell'app.</p>
+        <p className="fc-note">Genera un file .xlsx con quattro fogli: Rose, Classifica, Calendario (giornata in arrivo) e Punteggi (storico calcolato), con i dati attualmente caricati nell'app.</p>
         <button className="fc-btn primary" onClick={esporta}><Download size={14} /> Esporta Excel</button>
       </div>
 
       <div className="fc-form-card">
         <h3 style={{ margin: 0 }}>Importa</h3>
-        <p className="fc-note">Carica un file .xlsx con lo stesso formato (fogli "Rose", "Classifica", "Calendario" — anche solo alcuni, non serve averli tutti). Le colonne attese sono: Rose → Squadra, Calciatore, Ruolo; Classifica → Squadra, Punti, PG, GF, GS; Calendario → Giornata, Casa, Trasferta.</p>
+        <p className="fc-note">Carica un file .xlsx con lo stesso formato (fogli "Rose", "Classifica", "Calendario", "Punteggi" — anche solo alcuni, non serve averli tutti).</p>
+        <p className="fc-note">Colonne attese: Rose → Squadra, Calciatore, Ruolo; Classifica → Squadra, Punti, PG, GF, GS; Calendario → Giornata, Casa, Trasferta; Punteggi → Giornata, Squadra, Calciatore, Ruolo, Ha giocato, Gol fatti, Assist, Autogol, Rigori parati, Gol subiti squadra, Porta inviolata, Punteggio, Rigori sbagliati, Ammonizioni, Espulsioni.</p>
+        <p className="fc-note">Il foglio Punteggi va importato mentre la formazione della giornata da valutare è ancora quella attuale (prima di caricare il calendario della giornata successiva, che azzera le formazioni).</p>
         <div className="fc-checkbox-row">
           <label><input type="checkbox" checked={importaRose} onChange={e => setImportaRose(e.target.checked)} /> Rose</label>
           <label><input type="checkbox" checked={importaClassifica} onChange={e => setImportaClassifica(e.target.checked)} /> Classifica</label>
           <label><input type="checkbox" checked={importaCalendario} onChange={e => setImportaCalendario(e.target.checked)} /> Prossimo turno</label>
+          <label><input type="checkbox" checked={importaPunteggi} onChange={e => setImportaPunteggi(e.target.checked)} /> Punteggi</label>
         </div>
         <label className="fc-btn">
           <Upload size={14} /> Scegli file .xlsx
@@ -1362,7 +1375,13 @@ const CSS = `
 .fc-role-tag { font-family: 'IBM Plex Mono', monospace; font-size: 11px; width: 30px; }
 .fc-dim { color: var(--dim); }
 
-.fc-draft { display: flex; flex-direction: column; gap: 16px; border: 1px solid var(--border); border-radius: 10px; padding: 14px; background: var(--panel); }
+.fc-score-list { display: flex; flex-direction: column; gap: 10px; }
+.fc-score-row { border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+.fc-score-row:last-child { border-bottom: none; padding-bottom: 0; }
+.fc-score-main { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.fc-score-name { flex: 1; }
+.fc-score-pt { font-weight: 600; }
+.fc-score-detail { font-size: 11px; margin-top: 2px; margin-left: 34px; }
 `;
 
 
