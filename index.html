@@ -4,8 +4,6 @@
 <meta charset="UTF-8">
 
 <script>
-  // Deve essere il primissimo script eseguito: se una risorsa più sotto si blocca
-  // nel caricamento, questo timer è già partito e riesce comunque ad avvisare.
   window.addEventListener('error', function (e) {
     var el = document.getElementById('root-loading');
     if (el) el.textContent = 'Errore: ' + (e.message || 'risorsa non caricata') + (e.filename ? ' \u2014 ' + e.filename.split('/').pop() : (e.target && e.target.src ? ' \u2014 ' + e.target.src : ''));
@@ -311,7 +309,7 @@ function matchTeamId(teams, name) {
 }
 
 function useProssimoTurno(teams) {
-  const [state, setState] = useState({ numero: null, partite: [], loading: false, error: '' });
+  const [state, setState] = usePersisted('fc_turno_v1', { numero: null, partite: [], loading: false, error: '' });
 
   const setManual = useCallback((numero, partite) => {
     setState({ numero, partite, loading: false, error: '' });
@@ -357,10 +355,22 @@ function FantacalcioApp() {
   const [tab, setTab] = useState('classifica');
   const [torneo, setTorneo] = usePersisted('fc_torneo_v1', { nome: '', creato: false });
 
+  // Stato di sessione: vive qui (non dentro FormazioniTab) così non si perde
+  // quando si cambia tab e si torna indietro.
+  const [currentUserId, setCurrentUserId] = usePersisted('fc_session_user_v1', null);
+  const [isAdmin, setIsAdmin] = usePersisted('fc_session_admin_v1', false);
+  const [turnIndex, setTurnIndex] = usePersisted('fc_turnindex_v1', 0);
+  const [giornataVista, setGiornataVista] = usePersisted('fc_giornatavista_v1', null);
+  const [turnSeed] = useState(() => Math.random());
+
   const eliminaTorneo = useCallback(() => {
     setTorneo({ nome: '', creato: false });
     setUsers([]);
     setGiornate({});
+    setCurrentUserId(null);
+    setIsAdmin(false);
+    setTurnIndex(0);
+    setGiornataVista(null);
   }, []);
 
   const standings = useMemo(() => computeStandings(teams), [teams]);
@@ -413,6 +423,11 @@ function FantacalcioApp() {
           <FormazioniTab
             players={players} users={users} setUsers={setUsers} top6Ids={top6Ids} teams={teams} nextMatchOf={nextMatchOf}
             torneo={torneo} setTorneo={setTorneo} onDeleteTorneo={eliminaTorneo} classificaFanta={classificaFanta} giornataCorrente={prossimoTurno.numero}
+            currentUserId={currentUserId} setCurrentUserId={setCurrentUserId}
+            isAdmin={isAdmin} setIsAdmin={setIsAdmin}
+            turnIndex={turnIndex} setTurnIndex={setTurnIndex}
+            giornataVista={giornataVista} setGiornataVista={setGiornataVista}
+            turnSeed={turnSeed}
           />
         )}
         {tab === 'punteggi' && (
@@ -572,12 +587,53 @@ function RoseTab({ teams, players, setPlayers, top6Ids, nextMatchOf }) {
 
 /* ============================= TAB: FORMAZIONI ============================= */
 
-function FormazioniTab({ players, users, setUsers, top6Ids, teams, nextMatchOf, torneo, setTorneo, onDeleteTorneo, classificaFanta, giornataCorrente }) {
+function playersTakenBy(users, excludeUserId) {
+  const set = new Set();
+  users.forEach(u => {
+    if (u.id === excludeUserId) return;
+    Object.values(u.selezione || {}).forEach(id => { if (id) set.add(id); });
+  });
+  return set;
+}
+
+function SelettoreFormazione({ players, teams, top6Ids, nextMatchOf, sel, setSel, excludeIds }) {
+  const [query, setQuery] = useState('');
+  const label = (p) => p.name + (top6Ids.includes(p.team) ? ' (C)' : '');
+  const q = query.trim().toLowerCase();
+
+  const byRole = (ruolo) => {
+    const corrente = sel[ruolo];
+    return players
+      .filter(p => p.ruolo === ruolo)
+      .filter(p => p.id === corrente || !excludeIds.has(p.id))
+      .filter(p => p.id === corrente || !q || p.name.toLowerCase().includes(q) || teamName(teams, p.team).toLowerCase().includes(q))
+      .sort(byCognome);
+  };
+
+  return (
+    <>
+      <div className="fc-search-row">
+        <Search size={14} className="fc-dim" />
+        <input className="fc-input fc-search-input" placeholder="Cerca calciatore o squadra…" value={query} onChange={e => setQuery(e.target.value)} />
+        {query && <button className="fc-icon-btn" onClick={() => setQuery('')}><X size={14} /></button>}
+      </div>
+      <div className="fc-form-selects">
+        {ROLES.map(r => (
+          <select key={r} className="fc-select" value={sel[r]} onChange={e => setSel(s => ({ ...s, [r]: e.target.value }))}>
+            <option value="">{r}…</option>
+            {byRole(r).map(p => <option key={p.id} value={p.id}>{label(p)} ({p.team} · {matchLabel(nextMatchOf, p.team) || 'n/d'})</option>)}
+          </select>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function FormazioniTab({ players, users, setUsers, top6Ids, teams, nextMatchOf, torneo, setTorneo, onDeleteTorneo, classificaFanta, giornataCorrente, currentUserId, setCurrentUserId, isAdmin, setIsAdmin, turnIndex, setTurnIndex, giornataVista, setGiornataVista, turnSeed }) {
   const [nomeTorneo, setNomeTorneo] = useState('');
   const [editingTorneo, setEditingTorneo] = useState(false);
   const [editNome, setEditNome] = useState('');
 
-  const [currentUserId, setCurrentUserId] = useState(null);
   const [authMode, setAuthMode] = useState('login'); // 'login' | 'register'
 
   // login form
@@ -595,48 +651,33 @@ function FormazioniTab({ players, users, setUsers, top6Ids, teams, nextMatchOf, 
   // formation editor
   const [sel, setSel] = useState({ Portiere: '', Difensore: '', Centrocampista: '', Attaccante: '' });
   const [formError, setFormError] = useState('');
-  const [query, setQuery] = useState('');
-
-  // turno di scelta
-  const [seed] = useState(() => Math.random());
-  const [turnIndex, setTurnIndex] = useState(0);
-  const [giornataVista, setGiornataVista] = useState(null);
 
   // amministratore
-  const [isAdmin, setIsAdmin] = useState(false);
   const [adminIdInput, setAdminIdInput] = useState('');
   const [adminPinInput, setAdminPinInput] = useState('');
   const [adminLoginError, setAdminLoginError] = useState('');
   const [adminEditingId, setAdminEditingId] = useState(null);
   const [adminSel, setAdminSel] = useState({ Portiere: '', Difensore: '', Centrocampista: '', Attaccante: '' });
   const [adminFormError, setAdminFormError] = useState('');
-  const [adminQuery, setAdminQuery] = useState('');
   const [editingInfoId, setEditingInfoId] = useState(null);
   const [infoOwner, setInfoOwner] = useState('');
   const [infoTeam, setInfoTeam] = useState('');
   const [infoPin, setInfoPin] = useState('');
 
+  // iscrizione di una nuova squadra fatta dall'amministratore
+  const [adminRegOwner, setAdminRegOwner] = useState('');
+  const [adminRegTeam, setAdminRegTeam] = useState('');
+  const [adminRegPin, setAdminRegPin] = useState('');
+  const [adminRegError, setAdminRegError] = useState('');
+
   const currentUser = users.find(u => u.id === currentUserId) || null;
-  const label = (p) => p.name + (top6Ids.includes(p.team) ? ' (C)' : '');
-
-  const q = query.trim().toLowerCase();
-  const byRole = (ruolo) => players
-    .filter(p => p.ruolo === ruolo)
-    .filter(p => !q || p.name.toLowerCase().includes(q) || teamName(teams, p.team).toLowerCase().includes(q))
-    .sort(byCognome);
-
-  const aq = adminQuery.trim().toLowerCase();
-  const adminByRole = (ruolo) => players
-    .filter(p => p.ruolo === ruolo)
-    .filter(p => !aq || p.name.toLowerCase().includes(aq) || teamName(teams, p.team).toLowerCase().includes(aq))
-    .sort(byCognome);
 
   const hasStorico = users.some(u => Object.keys(u.storico || {}).length > 0);
   const turnOrder = useMemo(() => {
     if (users.length === 0) return [];
     if (hasStorico) return [...classificaFanta].map(u => u.id).reverse(); // ultimo in classifica sceglie per primo
-    return shuffleSeeded(users.map(u => u.id), seed); // prima giornata: ordine casuale
-  }, [users, classificaFanta, hasStorico, seed]);
+    return shuffleSeeded(users.map(u => u.id), turnSeed); // prima giornata: ordine casuale
+  }, [users, classificaFanta, hasStorico, turnSeed]);
 
   // ogni volta che cambia la giornata in arrivo, si riparte con una nuova coda e formazioni vuote
   useEffect(() => {
@@ -712,11 +753,14 @@ function FormazioniTab({ players, users, setUsers, top6Ids, teams, nextMatchOf, 
   };
   const adminLogout = () => { setIsAdmin(false); setAdminEditingId(null); setEditingInfoId(null); };
 
-  const adminStartEdit = (u) => { setAdminEditingId(u.id); setAdminSel({ ...u.selezione }); setAdminFormError(''); setAdminQuery(''); };
+  const adminStartEdit = (u) => { setAdminEditingId(u.id); setAdminSel({ ...u.selezione }); setAdminFormError(''); };
   const adminSaveFormazione = () => {
     setAdminFormError('');
     if (ROLES.some(r => !adminSel[r])) { setAdminFormError('Seleziona un calciatore per ciascuno dei 4 ruoli.'); return; }
+    const presi = playersTakenBy(users, adminEditingId);
     const scelti = ROLES.map(r => players.find(p => p.id === adminSel[r]));
+    const conflitto = scelti.find(p => p && presi.has(p.id));
+    if (conflitto) { setAdminFormError(`${conflitto.name} è già stato selezionato da un'altra squadra.`); return; }
     const inTop6 = scelti.filter(p => top6Ids.includes(p.team));
     if (inTop6.length > 1) {
       setAdminFormError(`Solo un giocatore può appartenere a una squadra Top 6: hai selezionato ${inTop6.length} (${inTop6.map(p => p.name).join(', ')}).`);
@@ -747,11 +791,24 @@ function FormazioniTab({ players, users, setUsers, top6Ids, teams, nextMatchOf, 
     if (idx >= 0) setTurnIndex(idx);
   };
 
+  const adminRegister = () => {
+    setAdminRegError('');
+    if (!adminRegOwner.trim() || !adminRegTeam.trim()) { setAdminRegError('Inserisci nome proprietario e nome squadra.'); return; }
+    if (adminRegPin.length < 4) { setAdminRegError('Il PIN deve avere almeno 4 caratteri.'); return; }
+    if (users.some(u => u.teamName.toLowerCase() === adminRegTeam.trim().toLowerCase())) { setAdminRegError('Esiste già una squadra con questo nome.'); return; }
+    const newUser = { id: `u${Date.now()}`, ownerName: adminRegOwner.trim(), teamName: adminRegTeam.trim(), pin: adminRegPin, selezione: { Portiere: '', Difensore: '', Centrocampista: '', Attaccante: '' }, capitanoRuolo: null, storico: {} };
+    setUsers(prev => [...prev, newUser]);
+    setAdminRegOwner(''); setAdminRegTeam(''); setAdminRegPin('');
+  };
+
   const submitFormazione = () => {
     setFormError('');
     if (!isMyTurn) { setFormError('Non è ancora il tuo turno.'); return; }
     if (ROLES.some(r => !sel[r])) { setFormError('Seleziona un calciatore per ciascuno dei 4 ruoli.'); return; }
+    const presi = playersTakenBy(users, currentUserId);
     const scelti = ROLES.map(r => players.find(p => p.id === sel[r]));
+    const conflitto = scelti.find(p => p && presi.has(p.id));
+    if (conflitto) { setFormError(`${conflitto.name} è stato nel frattempo selezionato da un altro giocatore: scegline un altro.`); return; }
     const inTop6 = scelti.filter(p => top6Ids.includes(p.team));
     if (inTop6.length > 1) {
       setFormError(`Solo un giocatore può appartenere a una squadra Top 6: hai selezionato ${inTop6.length} (${inTop6.map(p => p.name).join(', ')}).`);
@@ -807,13 +864,26 @@ function FormazioniTab({ players, users, setUsers, top6Ids, teams, nextMatchOf, 
       )}
 
       {isAdmin ? (
-        <div className="fc-form-card">
-          <div className="fc-user-head">
-            <strong>Amministratore</strong>
-            <button className="fc-icon-btn" onClick={adminLogout} title="Esci"><LogOut size={14} /></button>
+        <>
+          <div className="fc-form-card">
+            <div className="fc-user-head">
+              <strong>Amministratore</strong>
+              <button className="fc-icon-btn" onClick={adminLogout} title="Esci"><LogOut size={14} /></button>
+            </div>
+            <p className="fc-note">Pieni poteri: puoi iscrivere nuove squadre, modificarne dati e formazione, o eliminarle, senza vincoli di turno o PIN.</p>
           </div>
-          <p className="fc-note">Pieni poteri: puoi modificare dati, formazione o eliminare qualsiasi squadra dai riquadri qui sotto, senza vincoli di turno o PIN.</p>
-        </div>
+          <div className="fc-form-card">
+            <h3 style={{ margin: 0 }}>Iscrivi nuova squadra</h3>
+            <div className="fc-form-selects">
+              <input className="fc-input" placeholder="Nome proprietario" value={adminRegOwner} onChange={e => setAdminRegOwner(e.target.value)} />
+              <input className="fc-input" placeholder="Nome squadra" value={adminRegTeam} onChange={e => setAdminRegTeam(e.target.value)} />
+              <input className="fc-input" type="password" placeholder="PIN" value={adminRegPin} onChange={e => setAdminRegPin(e.target.value)} />
+            </div>
+            {adminRegError && <div className="fc-error">{adminRegError}</div>}
+            <button className="fc-btn primary" onClick={adminRegister}><Plus size={14} /> Iscrivi squadra</button>
+            <p className="fc-note">Dopo l'iscrizione usa l'icona scudo sulla card della squadra qui sotto per selezionarne i calciatori.</p>
+          </div>
+        </>
       ) : !currentUser ? (
         <div className="fc-form-card">
           <div className="fc-authtabs">
@@ -879,21 +949,9 @@ function FormazioniTab({ players, users, setUsers, top6Ids, teams, nextMatchOf, 
             <p className="fc-note">Non è ancora il tuo turno: tocca a <strong>{turnoUtente?.teamName || '—'}</strong> (posizione {turnIndex + 1} di {turnOrder.length}). Potrai schierare la formazione quando arriverà il tuo turno.</p>
           ) : (
             <>
-              <div className="fc-search-row">
-                <Search size={14} className="fc-dim" />
-                <input className="fc-input fc-search-input" placeholder="Cerca calciatore o squadra…" value={query} onChange={e => setQuery(e.target.value)} />
-                {query && <button className="fc-icon-btn" onClick={() => setQuery('')}><X size={14} /></button>}
-              </div>
-              <div className="fc-form-selects">
-                {ROLES.map(r => (
-                  <select key={r} className="fc-select" value={sel[r]} onChange={e => setSel(s => ({ ...s, [r]: e.target.value }))}>
-                    <option value="">{r}…</option>
-                    {byRole(r).map(p => <option key={p.id} value={p.id}>{label(p)} ({p.team} · {matchLabel(nextMatchOf, p.team) || 'n/d'})</option>)}
-                  </select>
-                ))}
-              </div>
+              <SelettoreFormazione players={players} teams={teams} top6Ids={top6Ids} nextMatchOf={nextMatchOf} sel={sel} setSel={setSel} excludeIds={playersTakenBy(users, currentUserId)} />
               {formError && <div className="fc-error">{formError}</div>}
-              <button className="fc-btn primary" onClick={submitFormazione}><Check size={14} /> Salva formazione</button>
+              <button className="fc-btn primary" onClick={submitFormazione}><Check size={14} /> Conferma</button>
             </>
           )}
         </div>
@@ -944,21 +1002,9 @@ function FormazioniTab({ players, users, setUsers, top6Ids, teams, nextMatchOf, 
             <strong>Modifica formazione: {users.find(u => u.id === adminEditingId)?.teamName}</strong>
             <button className="fc-icon-btn" onClick={() => setAdminEditingId(null)}><X size={14} /></button>
           </div>
-          <div className="fc-search-row">
-            <Search size={14} className="fc-dim" />
-            <input className="fc-input fc-search-input" placeholder="Cerca calciatore o squadra…" value={adminQuery} onChange={e => setAdminQuery(e.target.value)} />
-            {adminQuery && <button className="fc-icon-btn" onClick={() => setAdminQuery('')}><X size={14} /></button>}
-          </div>
-          <div className="fc-form-selects">
-            {ROLES.map(r => (
-              <select key={r} className="fc-select" value={adminSel[r]} onChange={e => setAdminSel(s => ({ ...s, [r]: e.target.value }))}>
-                <option value="">{r}…</option>
-                {adminByRole(r).map(p => <option key={p.id} value={p.id}>{label(p)} ({p.team} · {matchLabel(nextMatchOf, p.team) || 'n/d'})</option>)}
-              </select>
-            ))}
-          </div>
+          <SelettoreFormazione players={players} teams={teams} top6Ids={top6Ids} nextMatchOf={nextMatchOf} sel={adminSel} setSel={setAdminSel} excludeIds={playersTakenBy(users, adminEditingId)} />
           {adminFormError && <div className="fc-error">{adminFormError}</div>}
-          <button className="fc-btn primary" onClick={adminSaveFormazione}><Check size={14} /> Salva formazione (admin)</button>
+          <button className="fc-btn primary" onClick={adminSaveFormazione}><Check size={14} /> Conferma (admin)</button>
         </div>
       )}
     </div>
