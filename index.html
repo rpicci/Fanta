@@ -418,6 +418,8 @@ function FantacalcioApp() {
   const standings = useMemo(() => computeStandings(teams), [teams]);
   const top6Ids = useMemo(() => standings.slice(0, 6).map(t => t.id), [standings]);
 
+  // se si perdono i permessi di amministratore mentre si è sulla tab Dati, se ne esce
+  useEffect(() => { if (tab === 'dati' && !isAdmin) setTab('classifica'); }, [tab, isAdmin]);
   const prossimoTurno = useProssimoTurno(teams);
   const nextMatchOf = useMemo(() => {
     const map = {};
@@ -454,7 +456,7 @@ function FantacalcioApp() {
           <NavBtn active={tab === 'formazioni'} onClick={() => setTab('formazioni')} icon={<Shield size={16} />} label="Formazioni" />
           <NavBtn active={tab === 'punteggi'} onClick={() => setTab('punteggi')} icon={<Calculator size={16} />} label="Punteggi" />
           <NavBtn active={tab === 'classificaFanta'} onClick={() => setTab('classificaFanta')} icon={<Trophy size={16} />} label="Classifica" />
-          <NavBtn active={tab === 'dati'} onClick={() => setTab('dati')} icon={<Database size={16} />} label="Dati" />
+          {isAdmin && <NavBtn active={tab === 'dati'} onClick={() => setTab('dati')} icon={<Database size={16} />} label="Dati" />}
         </nav>
         <FixtureBar turno={prossimoTurno} />
       </header>
@@ -475,12 +477,13 @@ function FantacalcioApp() {
         )}
         {tab === 'punteggi' && <PunteggiTab players={players} users={users} />}
         {tab === 'classificaFanta' && <ClassificaFantaTab classificaFanta={classificaFanta} />}
-        {tab === 'dati' && (
+        {tab === 'dati' && isAdmin && (
           <DatiTab
             players={players} setPlayers={setPlayers} teams={teams} setTeams={setTeams}
             prossimoTurno={prossimoTurno} users={users} setUsers={setUsers}
           />
         )}
+        {tab === 'dati' && !isAdmin && <p className="fc-note" style={{ padding: 16 }}>Sezione riservata all'amministratore.</p>}
       </main>
     </div>
   );
