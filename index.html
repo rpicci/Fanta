@@ -675,6 +675,8 @@ function FormazioniTab({ players, users, setUsers, top6Ids, teams, nextMatchOf, 
 
   const [authMode, setAuthMode] = useState('login'); // 'login' | 'register'
 
+  useEffect(() => { if (authMode === 'admin' && users.length > 0) setAuthMode('login'); }, [authMode, users.length]);
+
   // login form
   const [loginId, setLoginId] = useState('');
   const [loginPin, setLoginPin] = useState('');
@@ -705,6 +707,14 @@ function FormazioniTab({ players, users, setUsers, top6Ids, teams, nextMatchOf, 
 
   // iscrizione di una nuova squadra fatta dall'amministratore
   const [adminRegOwner, setAdminRegOwner] = useState('');
+
+  // formazioni altrui nascoste finché non si clicca per mostrarle
+  const [espanse, setEspanse] = useState(() => new Set());
+  const toggleEspansa = (uid) => setEspanse(prev => {
+    const next = new Set(prev);
+    next.has(uid) ? next.delete(uid) : next.add(uid);
+    return next;
+  });
   const [adminRegTeam, setAdminRegTeam] = useState('');
   const [adminRegPin, setAdminRegPin] = useState('');
   const [adminRegError, setAdminRegError] = useState('');
@@ -718,12 +728,12 @@ function FormazioniTab({ players, users, setUsers, top6Ids, teams, nextMatchOf, 
     return shuffleSeeded(users.map(u => u.id), turnSeed); // prima giornata: ordine casuale
   }, [users, classificaFanta, hasStorico, turnSeed]);
 
-  // ogni volta che cambia la giornata in arrivo, si riparte con una nuova coda e formazioni vuote
+  // ogni volta che cambia la giornata in arrivo, si riparte con una nuova coda di turni;
+  // le formazioni restano quelle già confermate finché il giocatore non ne conferma una nuova
   useEffect(() => {
     if (giornataCorrente && giornataCorrente !== giornataVista) {
       setGiornataVista(giornataCorrente);
       setTurnIndex(0);
-      setUsers(prev => prev.map(u => ({ ...u, selezione: { Portiere: '', Difensore: '', Centrocampista: '', Attaccante: '' }, capitanoRuolo: null })));
     }
   }, [giornataCorrente]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -928,7 +938,9 @@ function FormazioniTab({ players, users, setUsers, top6Ids, teams, nextMatchOf, 
           <div className="fc-authtabs">
             <button className={`fc-navbtn ${authMode === 'login' ? 'active' : ''}`} onClick={() => setAuthMode('login')}>Accedi</button>
             <button className={`fc-navbtn ${authMode === 'register' ? 'active' : ''}`} onClick={() => setAuthMode('register')}>Iscrivi nuova squadra</button>
-            <button className={`fc-navbtn ${authMode === 'admin' ? 'active' : ''}`} onClick={() => setAuthMode('admin')}>Amministratore</button>
+            {users.length === 0 && (
+              <button className={`fc-navbtn ${authMode === 'admin' ? 'active' : ''}`} onClick={() => setAuthMode('admin')}>Amministratore</button>
+            )}
           </div>
 
           {authMode === 'login' && (
@@ -1029,7 +1041,16 @@ function FormazioniTab({ players, users, setUsers, top6Ids, teams, nextMatchOf, 
               </div>
             )}
 
-            <PitchView players={players} teams={teams} selezione={u.selezione} capitanoRuolo={u.capitanoRuolo} nextMatchOf={nextMatchOf} />
+            {(u.id === currentUserId || isAdmin || espanse.has(u.id)) ? (
+              <>
+                <PitchView players={players} teams={teams} selezione={u.selezione} capitanoRuolo={u.capitanoRuolo} nextMatchOf={nextMatchOf} />
+                {u.id !== currentUserId && !isAdmin && (
+                  <button className="fc-btn fc-hide-btn" onClick={() => toggleEspansa(u.id)}>Nascondi formazione</button>
+                )}
+              </>
+            ) : (
+              <button className="fc-btn fc-show-btn" onClick={() => toggleEspansa(u.id)}><Search size={13} /> Mostra formazione</button>
+            )}
           </div>
         ))}
         {users.length === 0 && <p className="fc-note">Nessuna squadra ancora iscritta al torneo.</p>}
@@ -1381,6 +1402,8 @@ const CSS = `
 .fc-user-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
 .fc-user-card.mine { border-color: var(--teal); box-shadow: 0 0 0 1px var(--teal) inset; }
 .fc-tag-mine { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; background: var(--teal); color: #05201B; padding: 2px 7px; border-radius: 999px; font-weight: 700; height: fit-content; }
+.fc-show-btn, .fc-hide-btn { width: 100%; justify-content: center; font-size: 12px; }
+.fc-hide-btn { margin-top: 8px; opacity: 0.7; }
 .fc-authtabs { display: flex; gap: 6px; margin-bottom: 4px; }
 .fc-search-row { display: flex; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 4px 10px; }
 .fc-checkbox-row { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; }
