@@ -241,26 +241,43 @@ function teamName(teams, id) { return teams.find(t => t.id === id)?.name || id; 
 
 const COLONNE_PUNTEGGI = ['Giornata', 'Squadra', 'Calciatore', 'Ruolo', 'Ha giocato', 'Gol fatti', 'Assist', 'Autogol', 'Rigori parati', 'Gol subiti squadra', 'Porta inviolata', 'Punteggio', 'Rigori sbagliati', 'Ammonizioni', 'Espulsioni'];
 
+// Lettura di una colonna tollerante a maiuscole/minuscole e spazi nell'intestazione
+// (es. "Porta inviolata", "porta Inviolata " e "PORTA INVIOLATA" sono equivalenti).
+function getCol(row, nomeColonna) {
+  if (!row) return undefined;
+  const target = nomeColonna.trim().toLowerCase();
+  const key = Object.keys(row).find(k => k.trim().toLowerCase() === target);
+  return key !== undefined ? row[key] : undefined;
+}
+
+// Interpreta come "sì" anche varianti comuni (booleano TRUE, 1, x, ecc.), non solo la stringa "si".
+function isSi(value) {
+  if (value === true) return true;
+  if (typeof value === 'number') return value === 1;
+  const s = String(value ?? '').trim().toLowerCase();
+  return s === 'si' || s === 'sì' || s === 's' || s === 'true' || s === '1' || s === 'yes' || s === 'x';
+}
+
 function trovaRigaGiocatore(rows, teams, teamId, nomeCalciatore) {
-  const candidate = rows.filter(r => matchTeamId(teams, r.Squadra) === teamId);
+  const candidate = rows.filter(r => matchTeamId(teams, getCol(r, 'Squadra')) === teamId);
   const nc = String(nomeCalciatore || '').toLowerCase();
-  let match = candidate.find(r => String(r.Calciatore || '').toLowerCase() === nc);
-  if (!match) match = candidate.find(r => String(r.Calciatore || '').toLowerCase().includes(nc) || nc.includes(String(r.Calciatore || '').toLowerCase()));
-  if (!match) match = candidate.find(r => cognome(String(r.Calciatore || '')).toLowerCase() === cognome(nomeCalciatore).toLowerCase());
+  let match = candidate.find(r => String(getCol(r, 'Calciatore') || '').toLowerCase() === nc);
+  if (!match) match = candidate.find(r => String(getCol(r, 'Calciatore') || '').toLowerCase().includes(nc) || nc.includes(String(getCol(r, 'Calciatore') || '').toLowerCase()));
+  if (!match) match = candidate.find(r => cognome(String(getCol(r, 'Calciatore') || '')).toLowerCase() === cognome(nomeCalciatore).toLowerCase());
   return match || null;
 }
 
 function calcolaPunteggioRiga(row, ruolo) {
-  const gol = Number(row['Gol fatti']) || 0;
-  const assist = Number(row['Assist']) || 0;
-  const autogol = Number(row['Autogol']) || 0;
-  const rigoriParati = Number(row['Rigori parati']) || 0;
-  const golSubiti = Number(row['Gol subiti squadra']) || 0;
-  const portaInviolata = String(row['Porta inviolata'] || '').trim().toLowerCase() === 'si';
-  const rigoriSbagliati = Number(row['Rigori sbagliati']) || 0;
-  const ammonizioni = Number(row['Ammonizioni']) || 0;
-  const espulsioni = Number(row['Espulsioni']) || 0;
-  const haGiocato = String(row['Ha giocato'] || '').trim().toLowerCase() === 'si';
+  const gol = Number(getCol(row, 'Gol fatti')) || 0;
+  const assist = Number(getCol(row, 'Assist')) || 0;
+  const autogol = Number(getCol(row, 'Autogol')) || 0;
+  const rigoriParati = Number(getCol(row, 'Rigori parati')) || 0;
+  const golSubiti = Number(getCol(row, 'Gol subiti squadra')) || 0;
+  const portaInviolata = isSi(getCol(row, 'Porta inviolata'));
+  const rigoriSbagliati = Number(getCol(row, 'Rigori sbagliati')) || 0;
+  const ammonizioni = Number(getCol(row, 'Ammonizioni')) || 0;
+  const espulsioni = Number(getCol(row, 'Espulsioni')) || 0;
+  const haGiocato = isSi(getCol(row, 'Ha giocato'));
 
   let punti = 0;
   const dettagli = [];
@@ -285,9 +302,9 @@ function calcolaPunteggioRiga(row, ruolo) {
 
 function importaPunteggiSheet(rows, { users, players, teams }) {
   if (!rows.length) return { ok: false, msg: 'Foglio "Punteggi" vuoto.' };
-  const giornataNum = Number(rows[0].Giornata) || null;
+  const giornataNum = Number(getCol(rows[0], 'Giornata')) || null;
   if (!giornataNum) return { ok: false, msg: 'Impossibile determinare il numero di giornata dalla colonna A.' };
-  const righeGiornata = rows.filter(r => !r.Giornata || Number(r.Giornata) === giornataNum);
+  const righeGiornata = rows.filter(r => !getCol(r, 'Giornata') || Number(getCol(r, 'Giornata')) === giornataNum);
 
   const discrepanze = [];
   const nuovoStorico = {};
@@ -303,9 +320,9 @@ function importaPunteggiSheet(rows, { users, players, teams }) {
       let riga = trovaRigaGiocatore(righeGiornata, teams, player.team, player.name);
       let sostituito = false;
       let nomeSostituto = null;
-      if (ruolo === 'Portiere' && riga && String(riga['Ha giocato'] || '').trim().toLowerCase() !== 'si') {
-        const titolare = righeGiornata.find(r => matchTeamId(teams, r.Squadra) === player.team && String(r.Ruolo || '').trim() === 'Portiere' && String(r['Ha giocato'] || '').trim().toLowerCase() === 'si');
-        if (titolare) { riga = titolare; sostituito = true; nomeSostituto = titolare.Calciatore; }
+      if (ruolo === 'Portiere' && riga && !isSi(getCol(riga, 'Ha giocato'))) {
+        const titolare = righeGiornata.find(r => matchTeamId(teams, getCol(r, 'Squadra')) === player.team && String(getCol(r, 'Ruolo') || '').trim() === 'Portiere' && isSi(getCol(r, 'Ha giocato')));
+        if (titolare) { riga = titolare; sostituito = true; nomeSostituto = getCol(titolare, 'Calciatore'); }
       }
 
       if (!riga) {
@@ -314,7 +331,8 @@ function importaPunteggiSheet(rows, { users, players, teams }) {
       }
 
       const { punti, dettagli, raw } = calcolaPunteggioRiga(riga, ruolo);
-      const dichiarato = riga.Punteggio !== undefined && riga.Punteggio !== '' ? Number(riga.Punteggio) : null;
+      const dichiaratoRaw = getCol(riga, 'Punteggio');
+      const dichiarato = dichiaratoRaw !== undefined && dichiaratoRaw !== '' ? Number(dichiaratoRaw) : null;
       if (dichiarato !== null && Math.abs(dichiarato - punti) > 0.01) {
         discrepanze.push(`${player.name} (${teamName(teams, player.team)}): foglio=${dichiarato}, calcolato=${punti}`);
       }
