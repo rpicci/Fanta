@@ -872,11 +872,30 @@ function FormazioniTab({ players, users, setUsers, top6Ids, teams, nextMatchOf, 
   };
 
   if (!torneo.creato) {
+    if (!isAdmin) {
+      return (
+        <div className="fc-panel">
+          <div className="fc-panel-head"><h2>Torneo non ancora creato</h2></div>
+          <div className="fc-form-card">
+            <p className="fc-note">Il torneo non è stato ancora creato. Solo l'amministratore può crearlo — se sei tu, accedi qui sotto.</p>
+            <div className="fc-form-selects">
+              <input className="fc-input" placeholder="Userid" value={adminIdInput} onChange={e => setAdminIdInput(e.target.value)} />
+              <input className="fc-input" type="password" placeholder="PIN" value={adminPinInput} onChange={e => setAdminPinInput(e.target.value)} />
+            </div>
+            {adminLoginError && <div className="fc-error">{adminLoginError}</div>}
+            <button className="fc-btn primary" onClick={doAdminLogin}><Lock size={14} /> Accedi come amministratore</button>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="fc-panel">
-        <div className="fc-panel-head"><h2>Crea il torneo</h2></div>
+        <div className="fc-panel-head">
+          <h2>Crea il torneo</h2>
+          <button className="fc-icon-btn" onClick={adminLogout} title="Esci"><LogOut size={14} /></button>
+        </div>
         <div className="fc-form-card">
-          <p className="fc-note">Prima di iscrivere i partecipanti va creato il torneo. Dai un nome e poi si potrà iniziare a iscrivere le squadre.</p>
+          <p className="fc-note">Dai un nome al torneo, poi potrai iniziare a iscrivere le squadre.</p>
           <input className="fc-input" placeholder="Nome del torneo" value={nomeTorneo} onChange={e => setNomeTorneo(e.target.value)} />
           <button className="fc-btn primary" onClick={creaTorneo}><Plus size={14} /> Crea torneo</button>
         </div>
